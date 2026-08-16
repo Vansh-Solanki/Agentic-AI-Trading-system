@@ -53,6 +53,6 @@ def warm_up(tickers: list[str], timeframes: list[Timeframe]) -> None:
     for ticker in tickers:
         for tf in timeframes:
             try:
-                get_candles(ticker, tf, force_refresh=True)
+                get_candles(ticker, tf, force_refresh=False)
             except Exception:
                 logger.exception("Cache warm-up failed for %s @ %s", ticker, tf.value)

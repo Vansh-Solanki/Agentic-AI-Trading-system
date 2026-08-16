@@ -8,12 +8,25 @@ MAX_DAILY_LOSS_PCT     = 0.03  # 3% of portfolio
 MAX_CONSECUTIVE_LOSSES = 4
 _FALLBACK_PORTFOLIO_VALUE = 100_000.0
 
+# Lazy-initialized singleton, same pattern as execution/order_router.py's
+# _broker — check_circuit_breakers() runs once per ticker's risk validation
+# AND once per maintenance-loop pass, so constructing a fresh AlpacaBroker()
+# on every call was re-initializing a broker connection many times per cycle.
+_broker = None
+
+
+def _get_broker():
+    global _broker
+    if _broker is None:
+        from execution.broker.alpaca import AlpacaBroker
+        _broker = AlpacaBroker()
+    return _broker
+
 
 def _get_portfolio_value() -> float:
     """Fetch live paper portfolio value from Alpaca; fall back to $100k if unavailable."""
     try:
-        from execution.broker.alpaca import AlpacaBroker
-        return AlpacaBroker().get_account()["portfolio_value"]
+        return _get_broker().get_account()["portfolio_value"]
     except Exception as exc:
         logger.warning("Could not fetch Alpaca portfolio value (%s) — using fallback $%.0f", exc, _FALLBACK_PORTFOLIO_VALUE)
         return _FALLBACK_PORTFOLIO_VALUE
@@ -33,7 +46,7 @@ def check_circuit_breakers() -> tuple[bool, str]:
     today_pnl = sum(
         t["pnl"] or 0.0
         for t in trades
-        if t.get("filled_at", "")[:10] == today and t["pnl"] is not None
+        if (t.get("filled_at") or "")[:10] == today and t["pnl"] is not None
     )
     if today_pnl < -(portfolio_value * MAX_DAILY_LOSS_PCT):
         reason = f"Daily loss limit hit: {today_pnl:.2f} ({today_pnl/portfolio_value:.1%})"

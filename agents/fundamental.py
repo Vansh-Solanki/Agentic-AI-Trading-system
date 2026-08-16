@@ -3,6 +3,7 @@ from core.constants import SignalType, SignalSource, Timeframe
 from core.models import AgentOutput, Signal, FundamentalData
 from agents.base_agent import BaseAgent
 from data.feeds.fundamentals_feed import fetch_fundamentals
+from data.storage.fundamentals_store import get_fundamentals_cache, save_fundamentals_cache
 
 _MIN_FLOOR = 0.50
 
@@ -67,7 +68,15 @@ class FundamentalAgent(BaseAgent):
         return "FundamentalAgent"
 
     def run(self, ticker: str, **kwargs) -> AgentOutput:
-        data = fetch_fundamentals(ticker)
+        # Session 38: fundamentals are quarterly-filing data that don't change
+        # intraday. Read the pre-market batch's SQLite cache first (24h TTL) so
+        # market-hours cycles never touch yfinance/_yf_lock; fall back to a
+        # live fetch (and populate the cache) only on a cold cache — e.g. the
+        # process started after the pre-market batch cutoff.
+        data = get_fundamentals_cache(ticker)
+        if data is None:
+            data = fetch_fundamentals(ticker)
+            save_fundamentals_cache(data)
         signals = self._score(data)
         summary = (
             f"P/E={data.pe_ratio}, P/B={data.pb_ratio}, "

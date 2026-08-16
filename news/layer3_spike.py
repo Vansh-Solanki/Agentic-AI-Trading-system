@@ -1,7 +1,8 @@
 import logging
+from core.config import LLM_TIMEOUT_SECONDS
 from core.models import Signal, NewsItem
 from core.constants import SignalType, SignalSource, Timeframe
-from data.feeds.price_feed import fetch_candles
+from data.cache.market_data_cache import get_candles
 from data.storage.news_store import save_news, save_news_event
 from news.finbert import score_sentiment
 from news.news_ingest import sentiment_label
@@ -20,9 +21,17 @@ def _detect_market_event(ticker: str) -> tuple[bool, str]:
     """
     Returns (event_detected, description).
     Checks 5-min candles for: price move > 1.5x ATR  OR  volume > 2x 20-bar avg.
+
+    Reads through market_data_cache.get_candles() rather than calling
+    price_feed.fetch_candles() directly (Session 39 fix): this runs every
+    Phase 1 cycle for every ticker regardless of whether a spike actually
+    fires, so calling the live feed directly meant a fresh Polygon/yfinance
+    round-trip per ticker per cycle, always — the warm_up() pre-fetch in
+    orchestrator.run_all() never got read here. M5's cache TTL (300s) matches
+    PIPELINE_CYCLE_SECS, so this is now a cache hit on essentially every call.
     """
     try:
-        df = fetch_candles(ticker, Timeframe.M5)
+        df = get_candles(ticker, Timeframe.M5)
     except Exception:
         logger.warning("Could not fetch 5m candles for spike gate on %s", ticker)
         return False, ""
@@ -82,7 +91,13 @@ def run_spike_detector(ticker: str, items: list[NewsItem]) -> list[Signal]:
 
         if abs(score) >= FINBERT_ESCALATION_THRESHOLD:
             prompt   = build_spike_prompt(ticker, item.headline, score, event_desc)
-            llm_resp = query_llm(prompt)
+            # Session 39, item 67 mitigation: bounds how long this thread can
+            # hold llm/client.py's _ollama_semaphore slot past its caller's
+            # own timeout — future.result() timing out doesn't kill this thread.
+            llm_resp = query_llm(prompt, timeout=LLM_TIMEOUT_SECONDS)
+            if llm_resp is None:
+                logger.warning("Layer 3: %s — LLM call failed, using FinBERT-only signal for this headline.", ticker)
+                llm_resp = ""
 
             # LLM response drives direction; FinBERT score provides confidence
             first_word = llm_resp.strip().split()[0].upper() if llm_resp.strip() else ""

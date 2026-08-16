@@ -51,7 +51,13 @@ class AlpacaBroker:
             qty=plan.quantity,
             side=self._OrderSide.BUY if plan.side.value == "buy" else self._OrderSide.SELL,
             time_in_force=self._TimeInForce.GTC,
-            limit_price=plan.entry_price,
+            # Alpaca rejects sub-penny limit prices (e.g. 322.17999267578125,
+            # a float precision artifact from upstream candle data) with
+            # "invalid limit_price ... sub-penny increment does not fulfill
+            # minimum pricing criteria." Round at this final point, right
+            # before the value leaves the app — nothing downstream adjusts it
+            # further.
+            limit_price=round(plan.entry_price, 2),
             **kw,
         )
         order = self.client.submit_order(req)
@@ -66,7 +72,8 @@ class AlpacaBroker:
             qty=plan.quantity,
             side=self._OrderSide.BUY if plan.side.value == "buy" else self._OrderSide.SELL,
             time_in_force=self._TimeInForce.GTC,
-            stop_price=plan.entry_price,
+            # Same sub-penny rejection risk as submit_limit_order() above.
+            stop_price=round(plan.entry_price, 2),
             **kw,
         )
         order = self.client.submit_order(req)

@@ -1,4 +1,4 @@
-from core.config import TradingMode
+from core.config import TradingMode, LLM_TIMEOUT_SECONDS
 from core.constants import SignalType, SignalSource, Timeframe
 from core.models import AgentOutput, Signal, TradePlan
 from agents.base_agent import BaseAgent
@@ -22,12 +22,25 @@ class CriticAgent(BaseAgent):
                                summary="No plan to critique.")
 
         prompt = build_critic_prompt(ticker, plan, supporting_summary)
+        _fail_open_response = '{"approved": true, "confidence": 0.5, "reasoning": "LLM unavailable — critic skipped."}'
         try:
-            response = query_llm(prompt)
+            # Session 39, item 67 mitigation: bounds how long this thread can
+            # hold llm/client.py's _ollama_semaphore slot after the caller
+            # (Phase 4's future.result timeout) has already given up on it —
+            # future.result() timing out does not kill this thread.
+            response = query_llm(prompt, timeout=LLM_TIMEOUT_SECONDS)
         except Exception as exc:
             import logging
             logging.getLogger(__name__).warning("[%s] Critic LLM call failed (%s) — defaulting to approved.", ticker, exc)
-            response = '{"approved": true, "confidence": 0.5, "reasoning": "LLM unavailable — critic skipped."}'
+            response = _fail_open_response
+
+        if response is None:
+            # query_llm() returns None on failure (Session 39+) instead of
+            # raising or returning a sentinel string — the try/except above
+            # only catches raised exceptions, so this path is not dead code.
+            import logging
+            logging.getLogger(__name__).warning("[%s] Critic LLM call returned None — defaulting to approved.", ticker)
+            response = _fail_open_response
 
         approved, confidence, reasoning, biggest_risk, failure_scenario = self._parse_response(response)
         stype = SignalType.BUY if approved else SignalType.STRONG_SELL
@@ -78,8 +91,24 @@ class CriticAgent(BaseAgent):
                 return approved, confidence, reasoning, biggest_risk, failure_scenario
             except (json.JSONDecodeError, ValueError):
                 pass
-        # Fallback keyword scan — keeps agent functional if LLM ignores schema
-        lower = text.lower()
+
+        # Targeted regex recovery: malformed JSON (e.g. a missing quote) still
+        # usually has an intact "approved": true/false key — recover that
+        # directly rather than falling through to the blind keyword scan,
+        # which would misfire on the literal key name itself (see below).
+        approved_match = re.search(r'"approved"\s*:\s*(true|false)', text, re.IGNORECASE)
+        if approved_match:
+            approved = approved_match.group(1).lower() == "true"
+            confidence = 0.75 if approved else 0.7
+            return approved, confidence, text, None, None
+
+        # Last-resort fallback keyword scan — keeps agent functional if the
+        # LLM ignores the schema entirely. The literal JSON key name
+        # "approved" contains "approve" as a substring, so it must be
+        # stripped first or this always returns True whenever the raw text
+        # still contains that key (regardless of its actual true/false value).
+        stripped = re.sub(r'"approved"\s*:\s*\S+', "", text)
+        lower = stripped.lower()
         approved = "approve" in lower or "proceed" in lower
         confidence = 0.75 if approved else 0.7
         return approved, confidence, text, None, None

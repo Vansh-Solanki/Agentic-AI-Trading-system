@@ -128,6 +128,26 @@ def init_schema() -> None:
             UNIQUE(ticker, headline, published_at)
         );
 
+        CREATE TABLE IF NOT EXISTS premarket_checkpoints (
+            ticker       TEXT NOT NULL,
+            batch_date   TEXT NOT NULL,
+            completed_at TEXT NOT NULL,
+            PRIMARY KEY (ticker, batch_date)
+        );
+
+        CREATE TABLE IF NOT EXISTS fundamentals_cache (
+            ticker          TEXT PRIMARY KEY,
+            pe_ratio        REAL,
+            pb_ratio        REAL,
+            revenue_growth  REAL,
+            earnings_growth REAL,
+            debt_to_equity  REAL,
+            free_cash_flow  REAL,
+            market_cap      REAL,
+            sector          TEXT,
+            fetched_at      TEXT NOT NULL
+        );
+
         CREATE INDEX IF NOT EXISTS idx_signals_ticker ON signals(ticker);
         CREATE INDEX IF NOT EXISTS idx_decisions_ticker ON trade_decisions(ticker);
         CREATE INDEX IF NOT EXISTS idx_news_published ON news(published_at);

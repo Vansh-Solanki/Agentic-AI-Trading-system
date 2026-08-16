@@ -1,5 +1,6 @@
 import threading
 import time
+import zlib
 from core.config import TradingMode
 from core.models import AgentOutput, Signal
 from agents.base_agent import BaseAgent
@@ -21,6 +22,20 @@ _last_run_layer5: dict[str, float] = {}
 _layer_timer_lock = threading.Lock()
 
 _LAYER4_INTERVAL_SECONDS = 3600
+
+
+def _layer4_stagger_offset(ticker: str) -> float:
+    """
+    Session 39, item 66: deterministic per-ticker offset within one hourly
+    window. `_last_run_layer4.get(ticker, 0.0)` previously defaulted every
+    unseen ticker to "already due," so all 20 tickers fired Layer 4 together
+    on the first post-startup cycle and re-synchronized onto the same hourly
+    burst thereafter — 20 Ollama calls at once through the 2-slot semaphore
+    instead of a smooth per-ticker trickle. zlib.crc32 (not the builtin hash(),
+    which is randomized per-process for strings) gives a stable offset across
+    runs so the same ticker always staggers to the same point in the hour.
+    """
+    return zlib.crc32(ticker.encode()) % _LAYER4_INTERVAL_SECONDS
 
 
 class NewsSentimentAgent(BaseAgent):
@@ -45,9 +60,14 @@ class NewsSentimentAgent(BaseAgent):
             premarket_signals = run_premarket_analysis(ticker)
             signals.extend(premarket_signals)
 
-        # Layer 4 — once per hour per ticker.
+        # Layer 4 — once per hour per ticker, staggered on first sight so all
+        # 20 tickers don't re-synchronize onto the same hourly burst (item 66).
         with _layer_timer_lock:
-            run_layer4 = time.monotonic() - _last_run_layer4.get(ticker, 0.0) >= _LAYER4_INTERVAL_SECONDS
+            if ticker not in _last_run_layer4:
+                _last_run_layer4[ticker] = (
+                    time.monotonic() - _LAYER4_INTERVAL_SECONDS + _layer4_stagger_offset(ticker)
+                )
+            run_layer4 = time.monotonic() - _last_run_layer4[ticker] >= _LAYER4_INTERVAL_SECONDS
         if run_layer4:
             weekly_signals = run_weekly_analysis(ticker)
             signals.extend(weekly_signals)

@@ -1,4 +1,5 @@
 import logging
+from core.config import LLM_TIMEOUT_SECONDS
 from core.models import NewsItem, Signal
 from core.constants import SignalType, SignalSource, Timeframe
 from data.feeds.news_feed import fetch_news
@@ -23,13 +24,16 @@ def _is_earnings_relevant(item: NewsItem) -> bool:
     return any(kw in text for kw in _EARNINGS_KEYWORDS)
 
 
-def run_quarterly_analysis(ticker: str) -> list[Signal]:
+def run_quarterly_analysis(ticker: str, llm_timeout: int = LLM_TIMEOUT_SECONDS) -> list[Signal]:
     """
     Layer 1 — Quarterly earnings/analyst narrative.
     Fetches 90-day news, filters for earnings/analyst content, scores with FinBERT,
     escalates to LLM for a quarterly thesis, and stores the thesis in stock_memory
     so Layer 4 (weekly) and Layer 5 (monthly) can incorporate it.
     Only called in LONG_TERM mode.
+
+    `llm_timeout`: defaults to the shared LLM_TIMEOUT_SECONDS constant
+    (core/config.py) rather than its own hardcoded value.
     """
     raw_items = fetch_news([ticker], hours_back=90 * 24, max_articles=50)
     for item in raw_items:
@@ -58,7 +62,16 @@ def run_quarterly_analysis(ticker: str) -> list[Signal]:
     earnings_text = "\n".join(f"- {i.headline}" for i in sorted_items) or "No earnings/analyst headlines found."
 
     prompt       = build_quarterly_analysis_prompt(ticker, earnings_text, avg_score)
-    llm_response = query_llm(prompt, max_tokens=300)
+    llm_response = query_llm(prompt, max_tokens=300, timeout=llm_timeout)
+
+    if llm_response is None:
+        # LLM call failed — do NOT overwrite quarterly_thesis in stock_memory
+        # with a placeholder. Layer 4/5 read this field back into their own
+        # prompts, so a bad write here corrupts context for future cycles,
+        # not just this one. Leaving the prior thesis in place is strictly
+        # safer than replacing it with nothing.
+        logger.warning("Layer 1: %s — LLM call failed, skipping quarterly_thesis update this cycle.", ticker)
+        return []
 
     # Persist quarterly thesis so Layer 4/5 can pull it into their prompts
     upsert_memory(ticker, "long_term", "quarterly_thesis", llm_response)

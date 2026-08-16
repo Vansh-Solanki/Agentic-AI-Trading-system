@@ -97,3 +97,27 @@ def get_recent_news_events(ticker: str, hours_back: int = 24) -> list[dict]:
             (ticker, cutoff),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ── premarket_checkpoints (Session 36: crash-resilient pre-market batch) ───────
+
+
+def is_premarket_checkpoint_complete(ticker: str, batch_date: str) -> bool:
+    """True if the pre-market batch already finished this ticker for batch_date (YYYY-MM-DD, ET)."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM premarket_checkpoints WHERE ticker = ? AND batch_date = ?",
+            (ticker, batch_date),
+        ).fetchone()
+    return row is not None
+
+
+def save_premarket_checkpoint(ticker: str, batch_date: str) -> None:
+    """Record that the pre-market batch finished this ticker for batch_date — lets a restart skip it."""
+    now = datetime.now(timezone.utc).isoformat()
+    with get_connection() as conn:
+        conn.execute(
+            """INSERT OR REPLACE INTO premarket_checkpoints (ticker, batch_date, completed_at)
+               VALUES (?,?,?)""",
+            (ticker, batch_date, now),
+        )

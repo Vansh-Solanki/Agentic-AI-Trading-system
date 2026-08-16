@@ -32,7 +32,27 @@ def get_finbert_pipeline():
                     )
                     logger.info("FinBERT pipeline loaded")
                 except ImportError:
-                    logger.warning("transformers not installed — FinBERT unavailable")
+                    logger.warning(
+                        "transformers not installed — FinBERT unavailable, "
+                        "sentiment scoring will fall back to neutral (0.0)."
+                    )
+                except Exception:
+                    # ProsusAI/finbert's main branch has no safetensors weights;
+                    # transformers/huggingface_hub silently falls back to an
+                    # auto-discovered, non-merged PR branch (refs/pr/29 as of
+                    # Session 34) to find compatible weights — a mechanism this
+                    # app has no control over. If that PR is closed, squashed, or
+                    # force-pushed, loading can fail for any reason (revision
+                    # resolution, network, format mismatch), not just a missing
+                    # package. Catching broadly here — not just ImportError — is
+                    # what actually prevents that from crashing the whole process
+                    # during the startup pre-warm in run_paper.py, before any
+                    # trading has started; score_sentiment() already degrades to
+                    # a neutral 0.0 score whenever this returns None.
+                    logger.exception(
+                        "FinBERT pipeline failed to load (model=ProsusAI/finbert) — "
+                        "sentiment scoring will fall back to neutral (0.0) for this run."
+                    )
     return _pipeline
 
 

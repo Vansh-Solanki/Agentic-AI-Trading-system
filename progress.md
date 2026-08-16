@@ -20,6 +20,36 @@ Build a production-grade AI trading agent that delivers intraday and long term b
 
 **Session 32: Pre-flight health check script implemented and hardened.** `scripts/health_check.py` created. Three-tier check: Tier 1 verifies packages, Alpaca credentials, DB tables, and agent class imports; Tier 2 verifies Alpaca `get_account()` + `get_clock()`, price feed, LLM backend (PASS either way — Claude API or Ollama), Finnhub key (WARN if missing), Polygon key (WARN if missing), Benzinga key (WARN if missing), and paper trading flag (WARN if `PAPER_TRADING=False`); Tier 3 instantiates all 10 agents in both modes. Zero side effects. Collect-all-then-report. Exits code 1 on any FAIL, code 0 on warnings-only or all pass. `AlpacaBroker.__init__()` hardened: bare `except Exception` added alongside existing `except ImportError` so any auth or connection error during broker construction falls to stub mode instead of crashing `ExecutionAgent` instantiation in Tier 3. `.env` file created from `.env.example` at project root so `load_dotenv()` picks up all keys.
 
+**Session 44: Progress audit — items 56-58 (42A/B/C) confirmed already implemented; item 63 (43C)'s claimed fix found not actually in the code and fixed for real.** Read `progress.md` end to end looking for genuinely outstanding work rather than re-doing what was already done. Items 56-58 (Session 42's `premarket_only` flag, `scripts/run_premarket.py`, `scripts/run_live.py`) were labeled "Pending Claude Code" but all three were already fully present and correct in the working tree — confirmed by reading all three files and grepping for the config constants they depend on (`PIPELINE_CYCLE_SECS`, `INTRADAY_CYCLE_SECS`, `LONGTERM_LOOP_INTERVAL_SECONDS` in `core/config.py`; `check_sl_tp_exits`/`run_maintenance` on `Orchestrator`). No code change needed for these three — status corrected in the Outstanding Stubs table and the Session 42 entry above. Item 63 (43C) was different: it was marked **Fixed Session 43**, but `agents/orchestrator.py` had no `self.premarket_only` attribute anywhere, and `self.critic.run()` was still called unconditionally inside `run_ticker()`'s Phase 4 — only `self.execution.run()` was actually gated on the `premarket_only` parameter. The claimed fix had not landed in the code. Fixed for real this session: added an early return immediately after `trade_plan` is built in Phase 4, before the `self.critic.run()` call, returning `results` (which already contains `trade_plan`) when `premarket_only=True`. Also deleted the now-unreachable `if premarket_only:` branch that used to guard `self.execution.run()` further down, since control flow can no longer reach it with `premarket_only=True`. Verified with `ast.parse()` and a manual read of the surrounding control flow; **not** exercised against a live Ollama/broker run this session — running `scripts/run_premarket.py` once and confirming Critic log lines drop to zero is the natural next verification step.
+
+**Session 43: Premarket batch performance audit — 4 fixes implemented.** Log analysis of a full premarket run (105-minute wall time observed: 79-minute news ingest + 13 orphaned Critic calls after "analysis complete") identified four root causes and fixed all four. (1) `classify_horizon=True` in `run_premarket_news_fetch()` was making one Ollama call per article to label it "intraday / long_term / both" — 541 LLM calls per run — but the `horizon` column written to `news_events` is never read by any layer (Layers 4/5 read the old `news` table; Layers 1/3 do not use the DB for routing at all). Fixed: `classify_horizon=False`, eliminating ~541 Ollama calls and cutting ingest from ~79 minutes to ~10-12 minutes. (2) `ingest_news_item()` re-scored every article with FinBERT even when Layer 2 had already set `item.sentiment_score` on the same objects in the same batch. Fixed: check `item.sentiment_score is not None` before calling `score_sentiment()` — zero-cost reuse when Layer 2 has already done the work. (3) Critic evaluated 13+ trade plans after `premarket_only` analysis was marked complete — plans that can never execute since `self.execution.run()` is already skipped when `premarket_only=True`. Fixed: early return in Phase 4 of `run_ticker()` when `premarket_only`, eliminating ~10 minutes of inference per run. (4) Layers 4 and 5 called `get_recent_news()` which reads the old sparse `news` table — never seeing the 541 articles ingested to `news_events` by the premarket batch, so weekly and monthly LLM prompts ran on empty/stale context every cycle. Fixed: both layers migrated to `get_recent_news_events()`. Closes item 38 (36D). Items 61-63 added and closed this session.
+
+**Session 42: Premarket/Live script split — confirmed implemented (see Session 44).** After-hours run of `run_paper.py` confirmed that both INTRADAY and LONG_TERM orchestrators correctly skip via the `_is_market_open()` guard in `run_all()` — the system idles every 60s doing nothing after hours, which is correct for `run_paper.py` but means there is no way to run the premarket analysis pipeline independently. Design decision locked: split into two scripts: `run_premarket.py` (one-shot, agents 1-9, no execution, bypasses market-hours guard) and `run_live.py` (continuous loop, full 11-agent pipeline, market hours only, replaces `run_paper.py`). Code-level audit of `orchestrator.py` confirmed the split is not zero-change: `run_all()` has a hard market-hours gate and `run_ticker()`'s execution agent call is hardwired with no skip mechanism. One surgical change required in `orchestrator.py`: add `premarket_only: bool = False` parameter to `run_all()` — when `True`, bypass the market-hours guard and skip the `self.execution.run()` call in `run_ticker()`. Log analysis also identified that `AlpacaBroker()` is re-initialized once per cycle from `run_paper.py`'s main loop (separate from the `circuit_breakers.py` singleton fixed in Session 40) — cosmetic, deferred as item 56. All three changes (orchestrator flag, `run_premarket.py`, `run_live.py`) were design locked pending Claude Code at the time of this entry — **Session 44 found and confirmed all three were already implemented and working in the codebase.** See Session 42 and Session 44 in the Implementation Log.
+
+**Session 41: Two threading bugs in `agents/orchestrator.py` fixed — timeouts silently defeated by pool shutdown, and the outer per-ticker timeout was dead code.** Manual-audit report of two bugs, both confirmed and fixed. Bug 1: `run_ticker()`'s Phase 1 `with ThreadPoolExecutor(...) as p1_pool:` block called `shutdown(wait=True)` on exit, blocking until every submitted thread finished — including ones already given up on via `fut.result(timeout=PHASE1_AGENT_TIMEOUT_SECONDS)`, so the timeout never actually bounded wall-clock time (production logs showed 35s to 3+ minute gaps between a "timed out" log line and the pipeline continuing). Fixed by dropping the `with` block and calling `p1_pool.shutdown(wait=False)` after the loop. Bug 2 (two sub-bugs in `run_all()`'s outer pool): same `with`-block shutdown issue, plus `as_completed(futures)` only ever yields a future after it has already finished, so `future.result(timeout=TICKER_TIMEOUT_SECONDS)` was called on an already-resolved future and could never raise `TimeoutError` — `TICKER_TIMEOUT_SECONDS` and the "skipping ticker" log were unreachable dead code, and `run_all()` always waited for the slowest ticker that cycle with no real cutoff. Fixed by replacing `as_completed()` with a polling loop using `concurrent.futures.wait(timeout=1, return_when=FIRST_COMPLETED)` and per-future deadlines tracked via `time.monotonic()` (imported as `from time import monotonic` to avoid colliding with the file's existing `from datetime import datetime, time, timezone`), abandoning expired futures without waiting on them, then `executor.shutdown(wait=False)`. Verified: a threaded test proved `shutdown(wait=False)` releases in ~1s instead of blocking ~5s for a straggler; a second test with FAST/MED/SLOW(10s) tasks and a 2s deadline confirmed the polling loop returns in ~2s with SLOW correctly marked timed-out, instead of blocking the full 10s. Grep confirmed no other `with ThreadPoolExecutor` or `as_completed` usage anywhere else in the file.
+
+**Session 40: Five bugs from a manual audit session fixed — `risk/circuit_breakers.py`, `agents/critic.py`, `news/layer3_spike.py`, `news/layer4_weekly.py`, `execution/broker/alpaca.py`.** `circuit_breakers.py`: `t.get("filled_at", "")[:10]` crashed with `TypeError` whenever a trade row had `filled_at` explicitly `None` (key present, value `None` — e.g. an unfilled order), since `.get()`'s default only covers a missing key, not a `None` value — this was crashing `check_circuit_breakers()`, which crashes `validate_plan()` and the standalone maintenance loop; fixed with `(t.get("filled_at") or "")[:10]`. Same file: `_get_portfolio_value()` constructed a brand new `AlpacaBroker()` on every call (once per ticker's risk validation, once per maintenance pass) — replaced with a lazy-initialized module-level singleton, same pattern as `execution/order_router.py`'s `_broker`. `critic.py` Bug A: `query_llm()` returning `None` on failure (Session 39+) sailed past the `try/except` (which only catches raised exceptions) straight into `_parse_response(None)`, crashing on `response.strip()` — fixed with an explicit `if response is None:` check applying the same fail-open default. Bug B (root cause of logs showing "Critic APPROVED the trade" alongside `"approved": false`): the fallback keyword scan's `"approve" in lower` matched the literal JSON key name `"approved"` as a substring whenever `json.loads()` failed on malformed LLM output, always returning `True` regardless of the actual value — fixed with a targeted `"approved"\s*:\s*(true|false)` regex recovery step tried before the keyword scan, and the JSON key stripped out of the text before that last-resort scan runs. `layer3_spike.py` and `layer4_weekly.py`: both had the same `None`-crash risk as critic.py Bug A (`.strip()`/`.lower()` called directly on a `query_llm()` result) — Layer 3 now logs a warning and falls back to FinBERT-only scoring (existing empty-string path); Layer 4 has no independent fallback score, so it logs a warning and returns `[]` for the cycle, same pattern as Layer 5's existing guard. `alpaca.py`: Alpaca rejected a limit order with "invalid limit_price 322.17999267578125 ... sub-penny increment does not fulfill minimum pricing criteria" — a float-precision artifact from upstream candle data passed straight through to `limit_price`/`stop_price` with no rounding; fixed by rounding to 2 decimals at the final point before submission in both `submit_limit_order()` and `submit_stop_order()` (the latter added after user confirmation, since it has the identical risk). Verified every fix with a targeted reproduction of the original crash/bug (not just import checks): the exact `filled_at=None` crash, the exact malformed-JSON-with-`approved:false` misparse, broker singleton reuse across 3 calls, and the float-rounding output. Follow-up `query_llm(...)` call-site audit found no other unguarded sites — `layer1_quarterly.py`, `layer2_premarket.py`, `layer5_monthly.py`, and `news_ingest.py`'s `_classify_horizon()` were already guarded.
+
+**Session 39 (addendum 4): Ollama timeout unified to one shared constant.** User flagged the timeout raise (20s→90s) as having only touched `LIVE_LLM_TIMEOUT_SECONDS`, leaving `news/news_ingest.py`'s separate `_PREMARKET_LLM_TIMEOUT=25` untouched, plus a hardcoded `timeout: int = 60`/`llm_timeout: int = 60` default independently repeated across `llm/client.py` (`query_llm`, `_query_ollama`, `_query_claude`), all three `run_*_analysis()` layer functions, and `news_ingest.py`'s `_classify_horizon()`/`ingest_news_item()` — eight places that all had to independently agree on the same number, with two different actual values in play. Given the timing finding that drove the 90s raise (a trivial prompt already took ~19s), the batch's 25s cap was almost certainly equally undersized and had never been re-examined. Collapsed to a single renamed constant, `LLM_TIMEOUT_SECONDS` (`core/config.py`, still 90), which every one of those eight defaults and both `_PREMARKET_LLM_TIMEOUT` call sites now reference explicitly rather than relying on their own default — matching the "explicit, nothing assumed" pattern already used for `_maintenance_lock`. Also fixed two now-stale doc references: `llm/client.py`'s docstring still said "passes timeout=25"; `news_ingest.py`'s `run_premarket_news_fetch()` docstring's "~80s/ticker x 20 tickers = ~27 min" worst-case estimate was calculated against the old 25s cap and is likely a significant underestimate now — flagged in the docstring as needing re-verification rather than silently left wrong. Verified: full import chain re-checked, and `inspect.signature()` confirmed all eight default parameters resolve to 90 via the one constant.
+
+**Session 39 (addendum 3): Reversal exit vs SL/TP maintenance thread race — fixed.** User caught a race introduced by item 68 (39B)'s SL/TP decoupling: `run_ticker()`'s reversal-exit path (`agents/orchestrator.py`) does a `has_pending_exit()` check then `_flat_position()` on the same trade the maintenance thread's `check_sl_tp_exits()` can also be checking/closing concurrently, and only the latter was under `_maintenance_lock`. Both could pass the pending-exit check before either wrote the exit, submitting two exit orders for one position — pre-existing in principle, but only a real concurrent scenario once the maintenance thread started running independently. Fixed by wrapping the reversal path's check-then-act in the same `_maintenance_lock`. Verified no re-entrant deadlock, and verified the race itself with a barrier-synchronized two-thread test: reproduced 2 duplicate submissions without the lock, confirmed 1 with it.
+
+**Session 39 (addendum 2): FinBERT PR-branch loading — crash risk fixed.** Item 32 (34E), deferred since Session 34 as "fragile but functional," was flagged as a live risk: `get_finbert_pipeline()` only caught `ImportError`, so if `ProsusAI/finbert`'s auto-discovered fallback PR branch (`refs/pr/29`) is closed, squashed, or force-pushed, the resulting exception would be uncaught and crash the startup pre-warm in `run_paper.py` before any trading started. Fixed: `news/finbert.py`'s `get_finbert_pipeline()` now catches `Exception` broadly, logs the full traceback, and returns `None`; `score_sentiment()` already falls back to neutral 0.0 whenever the pipeline is `None`, so this can no longer crash the process. `run_paper.py`'s pre-warm step also unconditionally logged "FinBERT ready" regardless of success — now checks the actual return value and logs a warning if unavailable. Verified by simulating the exact failure mode (a non-`ImportError` exception from the pipeline load): confirmed graceful degradation to `None`/0.0 instead of a crash. Note: this fixes the crash risk, not the underlying dependency fragility — FinBERT still relies on that same auto-discovered PR branch to find compatible weights, which remains outside the app's control.
+
+**Session 39 (addendum): Layer 3/4 candle cache bypass — fixed, and a prior root-cause claim corrected.** User flagged item 39 (36E) — deferred since Session 35 as "Layer 3 bypasses `_yf_lock`" — as high-impact and likely to reproduce the Session 33 crumb-corruption bug. Re-verification against the actual current code found the literal claim no longer holds: `price_feed._yf_fetch_candles()` already wraps every `yf.download()` call in `_yf_lock` (confirmed it and `fundamentals_feed.py` are the only two yfinance call sites in the codebase, both locked), so concurrent calls serialize safely rather than racing the crumb. The real, still-live bug one layer up: `news/layer3_spike.py`'s spike gate called `data.feeds.price_feed.fetch_candles()` directly instead of `data.cache.market_data_cache.get_candles()`, so it never read the cache `warm_up()` populates — every Phase 1 cycle, for every ticker, it did a fresh live Polygon/yfinance fetch just to check the ATR/volume gate, regardless of cache freshness. This also means the Session 37 progress note claiming "Problem 2's `warm_up()` fix makes this irrelevant" was itself wrong — `warm_up()` never got read by this call site. Fixed both `layer3_spike.py` and `news/layer4_weekly.py::_build_technical_summary()` (identical bug, lower impact since Layer 4 is already staggered/hourly) to read through `market_data_cache.get_candles()`. Verified with a mocked test: exactly one live fetch across two calls to `_detect_market_event()` for the same ticker, confirming the second call is now served from cache.
+
+**Session 39 (continued): Items 66, 68, timeout increases, and 67 implemented in the recommended order — verified.** Layer 4 stagger fix (item 66): `agents/news_sentiment.py` now assigns each first-seen ticker a deterministic per-ticker offset within the hourly window (`zlib.crc32(ticker) % 3600`, stable across runs unlike Python's randomized `hash()`) instead of defaulting to "already due," so the 20 tickers desynchronize instead of re-bursting together every hour. SL/TP decoupling (item 68): `scripts/run_paper.py` moved `run_maintenance()` and the long-term `check_sl_tp_exits()` onto their own daemon thread (`_maintenance_loop`), fully independent of the main loop's `run_all()` calls, so a long pipeline cycle can no longer starve stop-loss protection; caught and fixed a race this introduces — `Orchestrator` gained a per-instance `_maintenance_lock` (`agents/orchestrator.py`) around `_reconcile_closed_trades()` and `check_sl_tp_exits()`, since those methods can now genuinely be entered concurrently from the maintenance thread and from `run_all()` on the same instance, risking a double-close or duplicate exit order. Timeout increases: `core/config.py` added `PHASE1_AGENT_TIMEOUT_SECONDS=100` and `TICKER_TIMEOUT_SECONDS=150` (from hardcoded 30s/45s), safe now that item 68 removed the coupling between `run_all()` duration and SL/TP responsiveness. Item 67 mitigation: `core/config.py` added `LIVE_LLM_TIMEOUT_SECONDS=20`, threaded into the three live-cycle Ollama call sites (`agents/critic.py`, `news/layer3_spike.py`, `news/layer4_weekly.py`) — bounds how long an orphaned thread can hold `_ollama_semaphore` after its caller's `future.result()` has already timed out (true cancellation was out of scope; this is the "size the timeout" fallback the audit named). Verified: crc32 stagger offsets checked for spread/collisions across a 14-ticker sample; a live threaded test confirmed `_reconcile_closed_trades()` and `check_sl_tp_exits()` on the same `Orchestrator` no longer deadlock or race when called concurrently; `_maintenance_loop` tested standalone with fake orchestrators, confirmed it fires and stops cleanly on `stop_event`; full import chain re-verified with no circular-import or syntax errors.
+
+**Session 39: Ollama concurrency audit against actual files — three new open items identified, not yet implemented.** Code-level audit of `agents/critic.py`, `agents/news_sentiment.py`, `llm/client.py`, `news/news_ingest.py`, `agents/orchestrator.py`, and `scripts/run_paper.py`, prompted by revisiting the Session 36 "Problem 1 deferred" item now that GPU is confirmed unavailable (CPU-only, per user). Confirmed live-cycle Ollama contention is fully attributable to three sources sharing the single global `_ollama_semaphore = threading.Semaphore(2)` in `llm/client.py`: Critic (every actionable ticker, no throttle, by design), Layer 3 spike detector (self-gated by ATR/volume, ~5-20 events/day), and Layer 4 weekly bias (nominally throttled to once/hour/ticker). Three findings from this audit: (1) Layer 4's throttle check defaults `_last_run_layer4.get(ticker, 0.0)` to `0.0` on first sight of a ticker, so all 20 tickers become "due" simultaneously on process startup and re-synchronize to the same hourly burst indefinitely — not "every 5 minutes" but effectively "all 20 at once, every hour," undermining the throttle's intent. (2) `future.result(timeout=...)` in the Phase 1 inner pool (30s) and outer ticker pool (45s) does not kill the underlying thread on timeout — a thread still queued on the Ollama semaphore keeps running invisibly and can still hold a semaphore slot into the next 5-minute cycle, meaning Critic/Layer 3/Layer 4 calls can genuinely pile up across cycle boundaries, not just within one. (3) Verified via `run_paper.py` that the main loop is fully synchronous and completion-gated (`last_pipeline_run` is stamped only after `run_all()` returns, so cycles cannot overlap), which makes raising the 30s/45s timeouts safe from a scheduling-collision standpoint — but the same synchronous loop also means `run_maintenance()` (SL/TP breach checks) and the long-term SL/TP monitor cannot run at all while `run_all()` is still blocked, so a worst-case cycle (Layer 4 burst + high Layer 3/Critic load, estimated ~240s of pure LLM queue time, unverified/directional) could leave stop-loss protection dark for up to several minutes on the exact kind of volatile day that needs it most. Separately, an asymmetry was found and then verified as currently non-reachable: Layer 2 (`news_sentiment.py`) has no per-session throttle dict backing it (unlike Layers 1/4/5), relying only on `if not _is_market_open()` — but `Orchestrator.run_all()`'s own top-level market-hours guard (confirmed in `orchestrator.py`) prevents `NewsSentimentAgent.run()` from ever being reached while the market is closed, so this is dead code today, not an active bug; still recommended for hardening since it depends on a guarantee made two call-layers up. None of the three new findings are implemented yet — recommended order is (1) Layer 4 stagger fix, (2) decouple SL/TP monitoring onto its own thread/loop independent of `run_all()`, (3) raise Phase 1/outer timeouts as a secondary safety margin once 1 and 2 are in place. See Consolidated Open Bug List Session 39 block.
+
+**Session 38: FundamentalAgent pre-market cache — implemented and verified.** Design-locked plan implemented in full. Pre-flight verification of `agents/fundamental.py` and `data/feeds/fundamentals_feed.py` (Session 38's stated pending step) surfaced a correction to the original root-cause framing: `fetch_fundamentals()` already had an in-memory 6-hour TTL cache, so the literal "1,560 yfinance calls/day" figure was an overstatement — actual live-fetch volume was already throttled to roughly once per ticker per 6 hours. The real remaining problems were (a) that cache is in-process only and evaporates on every restart, and (b) since all 20 tickers' 6-hour windows expire around the same wall-clock time (they were all first-populated near process startup), the cache still produces a periodic 20-ticker pile-up on `_yf_lock` inside the parallel phase roughly every 6 hours — both fixed by moving the fetch to the sequential pre-market batch and persisting it in SQLite. Implemented: `fundamentals_cache` table in `data/storage/db.py` (all 8 `FundamentalData` fields, not just the 5 scored ones, so cache-hit and live-fetch paths produce identical `raw_data` for `AgentOutput`); new `data/storage/fundamentals_store.py` (`save_fundamentals_cache()`/`get_fundamentals_cache()`, 24h TTL); `news/news_ingest.py::run_premarket_news_fetch()` now fetches and caches fundamentals as the first step per ticker, before Layer 2, wrapped in its own try/except for per-ticker isolation; `agents/fundamental.py::run()` reads the cache first and only falls back to a live `fetch_fundamentals()` (populating the cache) on a cold/stale cache. Verified: a scratch-DB round-trip confirmed cache hit/miss/stale-expiry behavior, and a mocked `FundamentalAgent.run()` test confirmed exactly one live fetch across two `run()` calls for the same ticker (second call served entirely from SQLite). All back-to-back API congestion paths now addressed: Finnhub (fixed Session 34), yfinance candles (fixed Session 37), yfinance fundamentals (fixed Session 38), Ollama (deferred Problem 1, no GPU).
+
+**Session 37: Session 36's two design-locked items implemented and verified — Problem 2 (yfinance pre-fetch) and the pre-market batch redesign.** `agents/orchestrator.py`: `warm_up(WATCHLIST, timeframes)` now runs at the start of every `run_all()` cycle (not just once at script startup), using mode-specific timeframes, eliminating Phase 1 `_yf_lock` contention at every timeframe collision, not just the first one. `news/news_ingest.py::run_premarket_news_fetch()` rewritten to run Layers 2, 1, and 5 sequentially per ticker with all five crash mitigations: `llm/client.py::query_llm()` gained a `timeout` param (threaded through `layer1_quarterly.py`, `layer2_premarket.py`, `layer5_monthly.py`) so the batch caps every LLM call at 25s; each layer call is isolated in its own try/except; successful layers write directly into `agents.news_sentiment`'s `_last_run_layer1`/`_last_run_layer5` dicts so live cycles correctly skip them; a new `premarket_checkpoints` SQLite table (`data/storage/db.py`, `data/storage/news_store.py::is_premarket_checkpoint_complete()`/`save_premarket_checkpoint()`) lets a restart skip already-completed tickers; a market-open check aborts remaining tickers if the batch runs late. `scripts/run_paper.py`'s `_PREMARKET_CUTOFF` moved from 9:20am to 8:50am to match the longer batch. A circular import (`layer2_premarket.py` imports `sentiment_label` from `news_ingest.py`) was caught and fixed by deferring the new layer imports in `news_ingest.py` to call time, matching the existing local-import pattern for `_is_market_open`. Verified via direct module import and a scratch-DB checkpoint round-trip; no runtime errors.
+
+**Session 36: Live market clash analysis complete. Three problems solved or design-locked. Problem 1 (Ollama semaphore) deferred pending GPU/faster backend decision.** Full concurrency clash audit completed across all agents and layers during live market hours. Six clashes identified and triaged. Problem 2 (yfinance lock contention) design locked: PriceFeedAgent top-down pre-fetch — `warm_up(WATCHLIST, all_timeframes)` added to start of `run_all()` before `ThreadPoolExecutor` launches, eliminating all yfinance contention during parallel phase including worst-case 1:30pm quad-timeframe collision. Problem 3 (Finnhub hammering) confirmed already fixed in Session 34. Problem 4 (Benzinga) fully resolved: key confirmed active via `curl` test returning real articles, `BENZINGA_API_KEY` added to `.env`, one-line guard added to `news_feed.py` to skip Benzinga entirely when key absent. Pre-market batch redesign locked: Layers 1 and 5 moved into `run_premarket_news_fetch()`, startup time changed to 8:15am, `_PREMARKET_CUTOFF` moved to 8:50am, five crash mitigations locked (Ollama timeout cap 25s, per-layer exception isolation, session flag population from batch, per-ticker SQLite checkpoint, market-open abort guard). Items not discussed this session: FinBERT PR branch loading (still fragile but functional, last verified Session 34), Alpaca broker quadruple init (cosmetic, still deferred), MemoryAgent 0 keys (no closed trades yet to trigger write-back).
+
+**Session 35: News layer run frequency throttling — implemented and verified.**  Layer frequency gating added to `agents/news_sentiment.py`: Layers 1 and 5 once per session per ticker via `_last_run_layer1`/`_last_run_layer5` dicts; Layer 2 skipped during market hours via local import of `_is_market_open` (circular import resolved); Layer 4 once per hour via `_last_run_layer4` dict with 3600s threshold; Layer 3 unchanged. All dict reads/writes protected by `_layer_timer_lock`. Reduces peak Ollama load from ~140 calls per 5-min cycle to 20-40. Five-layer audit completed: Layer 3 PASS; Layer 4 and 5 read old `news` table not `news_events` (gap, deferred); Layer 1 fires in both INTRADAY and LONG_TERM modes doubling Ollama calls (gap, deferred); Layer 3 `fetch_candles` bypasses `_yf_lock` (gap, deferred); first-cycle race on Layers 1 and 5 (low priority, one extra call only).
+
 **Session 34: News architecture overhaul + cycle optimization — implemented.** Pre-implementation gate (`scripts/test_finnhub_ws.py`) failed: Finnhub's `subscribe-news` returned "You don't have access to this resource" — WebSocket news streaming unavailable on the current plan. Per user decision, implemented the design's own documented fallback (REST + `threading.Semaphore(2)` + 5-minute TTL cache in `news_feed.py`) in place of the WebSocket layer, and everything else as locked: M1 timeframe removed (5-minute is new floor); orchestrator split into `run_maintenance()` (60s: SL/TP + reconcile only) and `run_all()` (5-minute full pipeline); `news_events` SQLite table + `news/news_ingest.py` pre-market batch job (FinBERT + Ollama horizon classification) persist news across sessions; `OLLAMA_MODEL` confirmed already correct from Session 33. Live verification surfaced one new bug outside original scope — Ollama itself getting hammered by concurrent LLM calls once the Finnhub cascade was fixed — mitigated with the same semaphore pattern (`llm/client.py`), though a genuine CPU-throughput ceiling remains and is flagged for a future session.
 
 **Session 33: First live `run_paper.py` run — 4 real infra bugs found and fixed.** yfinance intermittently threw `HTTP Error 401: Invalid Crumb` because `data/feeds/fundamentals_feed.py` called `yfinance` directly, unlocked, from the same `ThreadPoolExecutor` pool as candle fetches — the resulting concurrent burst raced Yahoo's session crumb until it was invalidated, and yfinance has no built-in recovery once that happens (it keeps reusing the same bad crumb forever within the process). Fixed with a shared `_yf_lock` serializing all yfinance calls in `price_feed.py`, a `_reset_yf_crumb()` helper that clears the cached crumb/cookie and retries once on empty results, and routing `fundamentals_feed.py` through the same lock. Benzinga news requests were throwing `JSONDecodeError` because Benzinga defaults to an XML response body and the code called `resp.json()` unconditionally — fixed by sending `Accept: application/json`, which Benzinga honors via content negotiation (not a query param). Ollama (`llama3`) was not installed, causing every local-LLM call to fail with `ConnectionRefusedError` on `localhost:11434` (caught gracefully already, but silently degraded to `"[LLM unavailable]"`) — installed Ollama, pulled `llama3` (resumed cleanly after a stalled/retried download), verified end-to-end via `query_llm()`. Pandas `FutureWarning` spam (`float(single_element_series)` deprecated) from ~20 call sites across `signals/patterns/candlestick.py`, `signals/timeframe_aggregator.py`, and `agents/market_regime.py` is cosmetic only (still evaluates correctly; breaks in a future pandas major version) — suppressed via a scoped `warnings.filterwarnings()` in `run_paper.py` rather than touching the call sites, since the user wants it ignored, not fixed.
@@ -27,6 +57,568 @@ Build a production-grade AI trading agent that delivers intraday and long term b
 ---
 
 ## Implementation Log
+
+### Session 44: Progress Audit — Confirmed Session 42 Items, Corrected Item 63 (43C)
+
+**Status:** Items 56-58 (42A/B/C) confirmed already implemented, no change needed. Item 63 (43C) — previously marked fixed but not actually in the code — fixed for real this session.
+**Files modified:** `agents/orchestrator.py`
+
+#### Context
+
+Asked to read `progress.md` and implement whatever changes were still outstanding. Rather than trust the "Pending Claude Code" labels at face value, verified each one against the actual code, since a stale label is indistinguishable from a real gap without checking.
+
+#### Finding 1: Items 56-58 (42A/B/C) already implemented
+
+`agents/orchestrator.py` already had `premarket_only: bool = False` on both `run_all()` and `run_ticker()`, correctly bypassing the `_is_market_open()` guard and skipping `self.execution.run()`. `scripts/run_premarket.py` (93 lines) and `scripts/run_live.py` (184 lines) both existed, untracked in git, and matched the locked design in full — pre-warming FinBERT, warming the candle cache, running the premarket news fetch (premarket script only), dual-mode `Orchestrator` instantiation, and (in `run_live.py`) the `_maintenance_loop` daemon thread decoupled from the two `run_all()` cycles. `core/config.py` had all three referenced constants (`PIPELINE_CYCLE_SECS`, `INTRADAY_CYCLE_SECS`, `LONGTERM_LOOP_INTERVAL_SECONDS`). `ast.parse()` confirmed all three files are syntactically valid. No code changes made — this was pre-existing work that had never been reflected back into `progress.md`'s status labels.
+
+#### Finding 2: Item 63 (43C) was marked fixed but the fix was never actually applied
+
+Session 43's entry (line 116-135 of this file, "Fix 3 (43C)") describes adding an early return in `run_ticker()`'s Phase 4 guarded by `self.premarket_only`, before the Critic call. Grepping the actual file for `premarket_only` found only two live references: `run_all()`'s guard bypass, and a single `if premarket_only:` branch around `self.execution.run()` deep inside the Phase 4 execution block — `self.critic.run(...)` a few lines above it was called unconditionally, with no `self.premarket_only` attribute anywhere in the class. The documented fix (an early return right after `trade_plan` is built, before `self.critic.run()`) had not landed. Net effect if unfixed: every `scripts/run_premarket.py` run still evaluates the Critic once per actionable ticker — the exact ~10-minutes-of-discarded-Ollama-inference problem Session 43 believed it had already closed.
+
+**Fix applied:**
+
+```python
+plan = results["trade_plan"].raw_data.get("plan")
+
+# premarket_only runs never reach execution, so critiquing a plan that
+# can't be traded just burns an Ollama round-trip for a verdict nobody
+# reads. Trade plan itself is still produced and returned —
+# run_premarket.py writes it to SQLite.
+if premarket_only:
+    logger.info("[%s] premarket_only — skipping critic.", ticker)
+    return results
+
+structured_summary = build_structured_summary(regime_label, all_signals)
+results["critic"] = self.critic.run(ticker, plan=plan, supporting_summary=structured_summary)
+```
+
+Also removed the now-dead `if premarket_only: ... else: self.execution.run(...)` branch further down in the risk-validation block — with the early return in place, that branch can never see `premarket_only=True`, so it was collapsed back to the plain unconditional `self.execution.run()` call.
+
+**Verification:** `ast.parse()` on the modified file confirmed valid syntax; manually re-read the full Phase 4 control flow to confirm `trade_plan` is still populated and returned for `premarket_only=True` callers (so `run_premarket.py`'s `"trade_plan" in r` check still works) and that the reversal-exit and HOLD-logging paths earlier in `run_ticker()` (which already had their own `premarket_only` handling) are unaffected. **Not verified against a live run** — no Ollama/broker calls were exercised this session. Recommended next step: run `scripts/run_premarket.py` once and confirm no Critic log lines appear.
+
+---
+
+### Session 43: Premarket Batch Performance Audit — 4 Fixes
+**Status:** All four fixes implemented and closed this session.
+**Files modified:** `news/news_ingest.py`, `agents/orchestrator.py`, `news/layer4_weekly.py`, `news/layer5_monthly.py`
+
+#### Context: Log Analysis
+
+Full premarket run observed (20:39 to ~22:25 ET, 105-minute wall time). Breakdown:
+
+- 79 minutes: `run_premarket_news_fetch()` processing 20 tickers sequentially (20:42 to 22:01).
+- ~13 minutes: 13 Critic evaluations running after `Analysis done` log line (22:04 to 22:25), all rejected.
+- Both INTRADAY and LONG_TERM modes reported `0/6 tickers produced a trade plan` — the 14 per-mode tickers that fired correctly still had their results discarded by the `run_ticker timed out after 150s` outer deadline before their Critic verdict arrived.
+
+Four root causes identified and fixed.
+
+---
+
+#### Fix 1 (43A): Disable `classify_horizon` in premarket batch
+
+**Root cause:** Inside `run_premarket_news_fetch()` in `news/news_ingest.py`, every article is passed to `ingest_news_item(item, classify_horizon=True)`. `classify_horizon=True` calls `_classify_horizon()` which sends the headline to Ollama asking it to respond with exactly one word: "intraday", "long_term", or "both". One Ollama round-trip per article.
+
+With 541 articles across 20 tickers (8 tickers at 50 articles each account for 400 of the 541), this produced approximately 541 LLM calls just for horizon labeling, on top of the 60 layer-level calls (3 per ticker: Layer 2, Layer 1, Layer 5). The horizon label is saved to the `horizon` column in `news_events`.
+
+**The column is never read by any layer:**
+
+| Layer | Data source | Reads `horizon`? |
+|---|---|---|
+| Layer 1 | `fetch_news()` — fresh Finnhub pull (90 days) | No |
+| Layer 2 | `fetch_premarket_news()` — fresh Finnhub pull | No |
+| Layer 3 | `items` passed directly as a parameter | No |
+| Layer 4 | `get_recent_news()` from old `news` table | No (wrong table entirely) |
+| Layer 5 | `get_recent_news()` from old `news` table | No (wrong table entirely) |
+| `NewsSentimentAgent` | Timer-based (monotonic clock per layer) | No |
+
+The routing `horizon` was designed to enable — "intraday articles go to Layer 3, long_term articles go to Layer 1" — was never implemented. `NewsSentimentAgent` decides which layers to call based on time elapsed since last run, not on the stored label.
+
+**Fix:** `news/news_ingest.py::run_premarket_news_fetch()` — change `classify_horizon=True` to `classify_horizon=False` in the per-article ingestion loop. The `horizon` column will be `NULL` for all rows; nothing reads it so nothing changes downstream.
+
+**Impact:** ~541 Ollama calls eliminated. Ingest time drops from ~79 minutes to ~10-12 minutes (60 layer-level calls remaining at ~8-15s each).
+
+---
+
+#### Fix 2 (43B): Eliminate FinBERT duplication in `ingest_news_item()`
+
+**Root cause:** Inside `run_premarket_news_fetch()`, Layer 2 is run first via `run_premarket_analysis(ticker)`. Inside `run_premarket_analysis()` in `layer2_premarket.py`, every article is scored via `score_batch(headlines)` and the result assigned to `item.sentiment_score`. The same `items` objects are then passed to the `ingest_news_item()` loop, which calls `score_sentiment(item.headline + " " + item.summary)` unconditionally — re-running FinBERT on the same text that Layer 2 already scored, overwriting the same value.
+
+**Fix:** `news/news_ingest.py::ingest_news_item()` — check `item.sentiment_score` before calling `score_sentiment()`:
+
+```python
+score = item.sentiment_score if item.sentiment_score is not None else score_sentiment(item.headline + " " + item.summary)
+```
+
+For all articles that passed through Layer 2 (the premarket batch path), this is a zero-cost reuse. For articles that arrive without a pre-existing score (e.g. Layer 3 spike articles), `score_sentiment()` runs as before.
+
+**Impact:** Eliminates one FinBERT inference per article per Layer 2 batch. FinBERT is fast relative to Ollama (1-2s each) but the duplication is logically incorrect and removes up to ~500 redundant inferences across a full batch.
+
+---
+
+#### Fix 3 (43C): Skip Critic when `premarket_only=True`
+
+**Root cause:** When `run_all(premarket_only=True)` is called from `run_premarket.py`, Phase 4 of `run_ticker()` skips `self.execution.run()` — no orders are submitted. However the Critic still runs before that gate, calling Ollama once per actionable trade plan. In the observed run, 13 Critic evaluations ran after the `Analysis done` log line (the tickers had already been marked timed-out by the outer pool), each taking 45-60 seconds of inference, and every one rejected the trade. Total: ~10 minutes of Ollama inference producing no output and affecting no downstream state.
+
+The Critic's purpose is to prevent a bad trade from being executed. When `premarket_only=True`, no trade can be executed regardless of what the Critic says. Running it premarket is pure waste.
+
+The first live cycle via `run_live.py` will run the full pipeline including the Critic on the same signals with real execution stakes.
+
+**Fix:** `agents/orchestrator.py::run_ticker()` — add an early return at the start of Phase 4, before the Critic call:
+
+```python
+# Phase 4 — Critic + Execution
+if self.premarket_only:
+    logger.info("[%s] Premarket-only mode — skipping Critic (no execution will occur)", ticker)
+    return
+
+# existing Critic call continues...
+```
+
+**Impact:** Eliminates all Critic Ollama calls during premarket runs. Saves ~10 minutes in the observed run; saves more on busier signal days.
+
+---
+
+#### Fix 4 — Close item 38 (36D): Layers 4 and 5 read from wrong table
+
+**Root cause:** `news/layer4_weekly.py::run_weekly_analysis()` calls `get_recent_news(ticker, limit=30)` and `news/layer5_monthly.py::run_monthly_analysis()` calls `get_recent_news(ticker, limit=40)`. Both `get_recent_news()` calls read from the old `news` table. The premarket batch writes all 541 articles to `news_events` via `save_news_event()`. The old `news` table is written by `save_news()`, which is still called by Layer 1 and Layer 3 internally — but those rows contain only the subset of articles those layers process, not the full premarket batch context.
+
+Result: every hourly Layer 4 call and every session-start Layer 5 call runs its LLM prompt on at best a sparse and at worst an empty news context, ignoring the 541 articles the premarket batch spent 10+ minutes ingesting and classifying.
+
+**Fix:**
+- `news/layer4_weekly.py` — change `from data.storage.news_store import get_recent_news` to `from data.storage.news_store import get_recent_news_events` and update the call to `get_recent_news_events(ticker, hours_back=168)` (7 days, matching the weekly window).
+- `news/layer5_monthly.py` — same import change; update the call to `get_recent_news_events(ticker, hours_back=720)` (30 days, matching the monthly window).
+
+Both `get_recent_news_events()` queries return rows from `news_events` with the same `headline` field the existing `_build_news_summary()` methods already read. No structural changes to either layer's logic — the only change is which table is queried. The `limit=30`/`limit=40` parameters become `hours_back` windows consistent with each layer's stated time horizon.
+
+**Impact:** Layers 4 and 5 now see the full premarket batch context on every run. Weekly and monthly LLM prompts operate on real news signal instead of empty or stale data. This is the most direct signal-quality fix from this session — it makes the 541 premarket articles actually useful to the two layers designed to consume stored news.
+
+---
+
+#### Outstanding Stubs Added or Closed This Session
+
+| Item | File | Description |
+|---|---|---|
+| ~~**38 (36D)**~~ | ~~`news/layer4_weekly.py`, `news/layer5_monthly.py`~~ | ~~Layer 4 and 5 read from old `news` table via `get_recent_news()`.~~ **Fixed Session 43.** Both migrated to `get_recent_news_events()` with time-window parameters matching each layer's horizon. |
+| ~~**61 (43A)**~~ | ~~`news/news_ingest.py`~~ | ~~`classify_horizon=True` in `run_premarket_news_fetch()` — 541 Ollama calls per batch for a label written to `news_events.horizon` but never read by any layer.~~ **Fixed Session 43.** Changed to `classify_horizon=False`. |
+| ~~**62 (43B)**~~ | ~~`news/news_ingest.py`~~ | ~~`ingest_news_item()` re-scores articles with FinBERT even when Layer 2 already set `item.sentiment_score` on the same objects.~~ **Fixed Session 43.** Added `item.sentiment_score is not None` reuse check before calling `score_sentiment()`. |
+| ~~**63 (43C)**~~ | ~~`agents/orchestrator.py`~~ | ~~Critic runs during `premarket_only=True` evaluating plans that can never execute — ~10 minutes of inference per run, all verdicts discarded.~~ **Fixed Session 43.** Early return added to Phase 4 of `run_ticker()` when `premarket_only`. |
+
+---
+
+### Session 42: Premarket/Live Script Split — Design Locked
+**Status:** Design locked. No code implemented this session. All three items pending Claude Code.
+**Files to be modified/created:** `agents/orchestrator.py`, `scripts/run_premarket.py` (new), `scripts/run_live.py` (new)
+
+#### Context: After-Hours Log Analysis
+
+User ran `scripts/run_paper.py` after market hours (23:37 ET). Key observations from the log:
+
+- `Started at 23:37 ET (past 08:50 cutoff) — skipping pre-market news fetch` — premarket cutoff correctly applied. Working as designed.
+- `Market closed — skipping cycle` appears twice per cycle — both INTRADAY and LONG_TERM orchestrators hit the `_is_market_open()` guard in `run_all()` (line 515-517 of `agents/orchestrator.py`). Both return `{}` immediately. The system correctly idles after hours.
+- `Alpaca broker initialized (paper=True)` logs once per 60s cycle — source is `run_paper.py`'s main loop calling `AlpacaBroker()` for portfolio value or a similar check, not the orchestrator or the `circuit_breakers.py` singleton (which was fixed Session 40 and applies only within that module). Cosmetic, deferred as item 56.
+
+**Conclusion:** the system is working correctly after hours. The gap is that there is no path to run premarket analysis independently of the live market loop, either for scheduled 8:30 AM execution or for after-hours testing.
+
+#### Design Decision: Two Scripts
+
+`run_premarket.py`:
+- One-shot (no polling loop) — runs once, exits cleanly.
+- Invokes the full agent pipeline except `ExecutionAgent` (agents 1-9: Technical, News, Fundamental, Market Regime, Memory, Risk, Decision, Trade Plan, Critic).
+- Writes validated trade plans and signals to SQLite as normal — the live pipeline reads these on market open.
+- Bypasses the `_is_market_open()` guard so it can run at any time (8:30 AM scheduled, or after hours for testing).
+- Scheduled at 8:30 AM daily (Oracle/cron); can be run manually for testing.
+
+`run_live.py`:
+- Continuous polling loop, market hours only.
+- Full 11-agent pipeline including `ExecutionAgent`.
+- Replaces `run_paper.py`'s live-market behavior. `run_paper.py`'s embedded premarket check becomes redundant once `run_premarket.py` handles it separately.
+- Reads premarket context (signals, trade plans) from SQLite written by `run_premarket.py`.
+
+Both scripts share the same `Orchestrator` class, same agents, same DB layer. No code duplication — the only difference is which parameter is passed and whether the loop is continuous or one-shot.
+
+#### Required Change: `orchestrator.py` `premarket_only` Flag
+
+Code-level audit of `agents/orchestrator.py` confirmed two hardwired behaviors that prevent a pure new-file approach:
+
+1. `run_all()` line 515-517: `if not _is_market_open(): logger.info("Market closed — skipping cycle."); return {}` — hard gate with no bypass parameter.
+2. `run_ticker()` line 460: `results["execution"] = self.execution.run(ticker, plan=plan, all_signals=all_signals)` — execution agent hardwired, no conditional skip.
+
+**Design locked change:** Add `premarket_only: bool = False` parameter to `run_all()`. When `True`:
+- Skip the `_is_market_open()` guard (premarket analysis must run before market open).
+- Pass `premarket_only` down into `run_ticker()` and skip the `self.execution.run()` call at line 460 when `True`.
+- All other pipeline stages (Phase 1 parallel agents, risk gate, decision, trade plan, critic) run unchanged.
+
+This is the minimum required change. No other existing files need modification.
+
+#### Outstanding Stubs Added This Session
+
+| Item | File | Description |
+|---|---|---|
+| 56 (42A) | `agents/orchestrator.py` | Add `premarket_only: bool = False` to `run_all()` and `run_ticker()`. When `True`: bypass `_is_market_open()` guard; skip `self.execution.run()` in `run_ticker()`. Design locked. Pending Claude Code. |
+| 57 (42B) | `scripts/run_premarket.py` | New one-shot script. Calls `orchestrator.run_all(premarket_only=True)` for both INTRADAY and LONG_TERM modes, writes to SQLite, exits cleanly. Scheduled at 8:30 AM; works after hours for testing. Design locked. Pending Claude Code. |
+| 58 (42C) | `scripts/run_live.py` | New continuous-loop script replacing `run_paper.py`'s live-market behavior. Full 11-agent pipeline. Premarket check removed (now handled by `run_premarket.py` separately). Design locked. Pending Claude Code. |
+| 59 (42D) | `scripts/run_paper.py` | `AlpacaBroker()` re-initialized once per 60s cycle in the main loop — source confirmed as the main loop itself, not the orchestrator or `circuit_breakers.py` singleton. Cosmetic. Deferred — will be superseded by `run_live.py` implementation. |
+
+---
+
+### Session 41: Orchestrator Threading Bugs — Timeout-Defeating Pool Shutdown, Dead-Code Outer Timeout
+**Status:** Both bugs fixed and verified with targeted threaded reproductions, not just import checks.
+**Files modified:** `agents/orchestrator.py`
+
+#### Bug 1 — Phase 1 pool's `with` block silently defeated `PHASE1_AGENT_TIMEOUT_SECONDS`
+`run_ticker()`'s Phase 1 pool was a `with ThreadPoolExecutor(max_workers=5) as p1_pool:` block. Exiting a `with ThreadPoolExecutor(...)` block calls `shutdown(wait=True)`, which blocks until every submitted thread finishes — including ones the loop already gave up on via `fut.result(timeout=PHASE1_AGENT_TIMEOUT_SECONDS)` and replaced with an empty placeholder `AgentOutput`. So the timeout never bounded wall-clock time at all: the `with` block still waited for the slow agent's full real runtime before it could exit, then discarded that real result anyway. Confirmed via production logs — the gap between a logged "timed out" message and the pipeline actually continuing ranged from 35s to 3+ minutes, compounding across a cycle with up to 5 Phase 1 agents.
+
+Fixed by dropping the `with` statement: `p1_pool = ThreadPoolExecutor(max_workers=5)` constructed directly, the same try/except loop unchanged, then `p1_pool.shutdown(wait=False)` after the loop. This releases the pool immediately without waiting on stragglers — they keep running in the background (Python cannot cancel a running thread), but nothing calls `.result()` on them again, so their eventual output is simply discarded.
+
+#### Bug 2 — `run_all()`'s outer pool: same `with`-block issue, plus `as_completed()` made `TICKER_TIMEOUT_SECONDS` unreachable dead code
+Two separate bugs in the same block:
+(a) Same `with ThreadPoolExecutor(...) as executor:` shutdown(wait=True) issue as Bug 1.
+(b) `as_completed(futures)` only ever yields a future *after* it has already finished. `future.result(timeout=TICKER_TIMEOUT_SECONDS)` was therefore always called on an already-resolved future and could never actually raise `TimeoutError` — `TICKER_TIMEOUT_SECONDS` and the "skipping ticker" log line were unreachable dead code under normal conditions. `run_all()` always waited for whichever ticker was slowest that cycle, no matter how long, with no real per-ticker cutoff.
+
+Fixed by replacing `as_completed()` with a polling loop using `concurrent.futures.wait(pending, timeout=1, return_when=FIRST_COMPLETED)` and explicit per-future deadlines tracked via `time.monotonic()`. Import changes: `from concurrent.futures import ThreadPoolExecutor, wait as futures_wait, FIRST_COMPLETED` (removed `as_completed`, confirmed via grep it's used nowhere else in the file), and `from time import monotonic` — added as a separate single-name import rather than `import time`, since the file already imports the `time` class from `datetime` (`from datetime import datetime, time, timezone`) and a bare `import time` would collide with that name.
+
+```python
+executor = ThreadPoolExecutor(max_workers=10)
+futures = {executor.submit(self.run_ticker, ticker, ...): ticker for ticker in WATCHLIST}
+deadlines = {fut: monotonic() + TICKER_TIMEOUT_SECONDS for fut in futures}
+pending = set(futures)
+while pending:
+    done, pending = futures_wait(pending, timeout=1, return_when=FIRST_COMPLETED)
+    for fut in done:
+        # collect result or log exception
+    expired = {fut for fut in pending if monotonic() >= deadlines[fut]}
+    for fut in expired:
+        # log timeout, drop from pending — do not wait on it further
+executor.shutdown(wait=False)
+```
+
+#### Verification
+A threaded test with a fast task and a 5s-sleeping task, `timeout=1`, confirmed `shutdown(wait=False)` returns in ~1s instead of blocking ~5s for the straggler. A second test with FAST (0.2s), MED (1.0s), and SLOW (10s) tasks and a 2s per-future deadline confirmed the polling loop returns in ~2s with SLOW correctly marked `TIMED_OUT` — under the old `as_completed()` code this scenario would have blocked the full 10s. Grep re-confirmed exactly the two `with ThreadPoolExecutor` blocks and one `as_completed` call originally reported — no other occurrences anywhere else in the file, before or after the fix.
+
+---
+
+### Session 40: Five Bugs From a Manual Audit Session
+**Status:** All five fixed and verified with targeted reproductions of the original bug (not just import/parse checks).
+**Files modified:** `risk/circuit_breakers.py`, `agents/critic.py`, `news/layer3_spike.py`, `news/layer4_weekly.py`, `execution/broker/alpaca.py`
+
+#### Bug 1 — `risk/circuit_breakers.py`: `filled_at=None` crashes `check_circuit_breakers()`
+`t.get("filled_at", "")[:10]` — the `""` default only applies when the `filled_at` **key** is missing. A trade row with `filled_at` explicitly stored as `None` (key present, value `None` — e.g. an unfilled order) makes `.get()` return `None`, and `None[:10]` raises `TypeError`. This crashed `check_circuit_breakers()`, which crashes both `validate_plan()` (blocking trade risk validation) and the standalone maintenance loop. Fixed: `(t.get("filled_at") or "")[:10]`. Verified with the exact crash condition (a trade dict with `filled_at: None`) — no longer raises.
+
+Second bug, same file: `_get_portfolio_value()` constructed a brand new `AlpacaBroker()` via a local import on every single call. Since `check_circuit_breakers()` runs once per ticker's risk validation *and* once per maintenance-loop pass, this re-initialized a broker connection many times per cycle. Fixed with a lazy-initialized module-level singleton (`_broker = None` + `_get_broker()` getter), same pattern as `execution/order_router.py`'s eager `_broker = AlpacaBroker()`. Verified: 3 calls to `_get_portfolio_value()` with `AlpacaBroker` mocked to count constructions confirmed exactly 1 construction across all 3 calls.
+
+#### Bug 2 — `agents/critic.py`: None-crash risk, and the "APPROVED" logging bug
+Bug A: `query_llm()` was changed (Session 39+) to return `None` on failure instead of raising or returning a sentinel string. The existing `try/except` around the call only catches raised exceptions, so a `None` return sailed past it into `_parse_response(None)`, which crashed on `response.strip()`. Fixed: an explicit `if response is None:` check after the try/except, applying the same fail-open default already used in the except block, with its own warning log line.
+
+Bug B (root cause of logs showing "Critic APPROVED the trade" alongside `"approved": false` in the same message): `_parse_response()`'s fallback keyword scan does `approved = "approve" in lower or "proceed" in lower` against the raw, still-JSON-shaped text whenever `json.loads()` fails. The literal JSON key name `"approved"` contains `"approve"` as a substring, so this always returned `True` whenever the LLM's JSON was malformed — regardless of whether the actual value was `true` or `false`. Fixed: before falling through to the keyword scan, a targeted regex recovery step — `re.search(r'"approved"\s*:\s*(true|false)', text, re.IGNORECASE)` — recovers the correct boolean directly even when the rest of the JSON is malformed. Only falls through to the last-resort keyword scan if that regex doesn't match at all, and that scan now strips any `"approved":` key occurrence from the text first (`re.sub(r'"approved"\s*:\s*\S+', "", text)`) before scanning, since the substring match would otherwise still fire on the key name itself.
+
+Verified with 5 cases: well-formed `approved:false` JSON, **malformed** JSON with `approved:false` (the exact bug — previously misparsed as `True`, now correctly `False`), malformed JSON with `approved:true`, plain-prose "I approve this trade," and plain-prose rejection with no keyword match. All 5 returned the correct boolean.
+
+#### Bug 3 — `news/layer3_spike.py`: None-crash risk
+`llm_resp = query_llm(...)` followed by `llm_resp.strip().split()[0]` crashed if `llm_resp` was `None` (same root cause as critic.py Bug A). Fixed: immediately after the `query_llm()` call, `if llm_resp is None:` logs a warning and sets `llm_resp = ""`. The existing downstream logic already handles an empty string correctly (falls through to the FinBERT-only decision path) — no further changes needed there.
+
+#### Bug 4 — `news/layer4_weekly.py`: None-crash risk
+`llm_response = query_llm(...)` followed by `llm_response.lower()` crashed if `llm_response` was `None`. Fixed: immediately after the call, `if llm_response is None:` logs a warning and `return []` — Layer 4 has no independent fallback score, unlike Layer 2 (FinBERT avg) or Layer 3 (FinBERT score), so skipping the cycle entirely (same pattern as Layer 5's existing guard) is safer than manufacturing a signal from nothing.
+
+#### Bug 5 — `execution/broker/alpaca.py`: sub-penny limit/stop price rejected by Alpaca
+Alpaca rejected an AAPL limit order: `"invalid limit_price 322.17999267578125 ... sub-penny increment does not fulfill minimum pricing criteria."` `submit_limit_order()` passed `plan.entry_price` (a float-precision artifact from upstream candle data, likely a numpy float32 value cast to Python `float`) straight into `LimitOrderRequest`'s `limit_price` with no rounding — the final value before submission, confirmed nothing downstream adjusts it further. Fixed: `limit_price=round(plan.entry_price, 2)`. After showing the file and flagging that `submit_stop_order()` has the identical risk on its `stop_price` parameter, user confirmed fixing both — `stop_price=round(plan.entry_price, 2)` applied there too. Verified: `round(322.17999267578125, 2)` → `322.18`.
+
+#### Follow-up: `query_llm(...)` call-site audit
+Grepped all 8 `query_llm()` call sites in the codebase. `agents/critic.py`, `news/layer3_spike.py`, and `news/layer4_weekly.py` were the three unguarded ones — all three are Bugs 2-4 above, now fixed. `news/layer1_quarterly.py`, `news/layer2_premarket.py`, `news/layer5_monthly.py`, and `news/news_ingest.py`'s `_classify_horizon()` were already guarded against `None` from earlier work — confirmed by reading each, no further action needed.
+
+---
+
+### Session 39 (continued): Items 66, 68, Timeout Increases, 67 — Implemented and Verified
+**Status:** All four implemented in the recommended order (66 → 68 → timeout increases → 67). Verified via targeted threaded tests, not just import checks.
+**Files modified:** `agents/news_sentiment.py`, `agents/orchestrator.py`, `scripts/run_paper.py`, `core/config.py`, `agents/critic.py`, `news/layer3_spike.py`, `news/layer4_weekly.py`
+
+#### Item 66 — Layer 4 Stagger Fix
+`agents/news_sentiment.py` — added `_layer4_stagger_offset(ticker)`, returning `zlib.crc32(ticker.encode()) % _LAYER4_INTERVAL_SECONDS`. `zlib.crc32` was used instead of the builtin `hash()` because Python randomizes `hash()` for strings per-process (`PYTHONHASHSEED`), which would make the stagger different every restart instead of stable. On first sight of a ticker, `_last_run_layer4[ticker]` is now initialized to `time.monotonic() - _LAYER4_INTERVAL_SECONDS + offset` instead of being implicitly "already due" — so the ticker becomes due `offset` seconds from now (spread somewhere in the next hour) rather than immediately. Verified: a 14-ticker sample of crc32 offsets showed a clean spread across the 3600s window with no collisions.
+
+#### Item 68 — Decouple SL/TP Monitoring
+`scripts/run_paper.py` — new `_maintenance_loop(intraday_orch, longterm_orch, stop_event)` function runs on its own daemon thread, calling `intraday_orch.run_maintenance()` every `INTRADAY_CYCLE_SECS` and `longterm_orch.check_sl_tp_exits()` every 300s, using `stop_event.wait()` instead of `time.sleep()` so it can be interrupted cleanly on shutdown. `main()` now starts this thread before entering the main loop, and the main loop's body was reduced to just the two `run_all()` calls (intraday every `PIPELINE_CYCLE_SECS`, long-term every `LONGTERM_LOOP_INTERVAL_SECONDS`) plus the portfolio-value refresh — no longer calls `run_maintenance()`/`check_sl_tp_exits()` itself. `KeyboardInterrupt` handling consolidated into one outer `try/except` around the main loop (relies on `except Exception` clauses inside not catching `BaseException`-derived `KeyboardInterrupt`); `finally` block sets `stop_event` and joins the maintenance thread with a 5s timeout on shutdown.
+
+**Race introduced by this change, caught and fixed before it shipped:** decoupling means the maintenance thread's `run_maintenance()`/`check_sl_tp_exits()` calls can now genuinely execute concurrently with the main thread's `run_all()` on the *same* `Orchestrator` instance — impossible in the old single-threaded loop. Without protection, two overlapping calls to `_reconcile_closed_trades()` could both see the same trade as still-open and both call `close_trade()` (double-counted PnL), and two overlapping calls to `check_sl_tp_exits()` could both pass the `has_pending_exit()` check before either submits an exit order (duplicate order). Fixed: `Orchestrator.__init__()` (`agents/orchestrator.py`) gained `self._maintenance_lock = threading.Lock()`; `_reconcile_closed_trades()` and `check_sl_tp_exits()` each wrap their full body in `with self._maintenance_lock:`. These are two independent `with` blocks called sequentially (not nested) from `_refresh_portfolio_and_reconcile()`, so there's no self-deadlock — each acquires and releases the lock in turn. The lock is scoped tightly around each method body, not the whole pipeline, so it doesn't reintroduce the starvation problem the thread split was built to fix.
+
+**Verified:** a threaded test called `orch._reconcile_closed_trades()` and `orch.check_sl_tp_exits()` from two separate threads on the same `Orchestrator` (with `get_filled_trades` mocked to a slow no-op) — both completed without deadlock or exception. A second test ran `_maintenance_loop` on a background thread against fake orchestrator stand-ins, confirmed it invokes `run_maintenance()` at least once and stops cleanly within the `stop_event.set()` + `join(timeout=5)` window.
+
+#### Timeout Increases
+`core/config.py` — added `PHASE1_AGENT_TIMEOUT_SECONDS=100` (was hardcoded `30`) and `TICKER_TIMEOUT_SECONDS=150` (was hardcoded `45`), both env-overridable. `agents/orchestrator.py` — `fut.result(timeout=PHASE1_AGENT_TIMEOUT_SECONDS)` in the Phase 1 inner pool, `future.result(timeout=TICKER_TIMEOUT_SECONDS)` in the outer ticker pool. Done last of the three actionable fixes (before item 67, per the recommended order) specifically because item 68 removed the reason these had to stay short — a long `run_all()` no longer risks starving SL/TP checks, so the pipeline can now absorb more Ollama queueing latency per ticker instead of discarding partial work that might have finished given more headroom.
+
+#### Item 67 Mitigation — Bounded Live-Cycle LLM Timeout
+No full fix was designed in the audit (true cancellation of a thread blocked on `_ollama_semaphore` was named as out of scope pending further design) — implemented the audit's named fallback instead: "explicit timeout/semaphore sizing that accounts for orphaned holders." `core/config.py` — added `LIVE_LLM_TIMEOUT_SECONDS=20`. Threaded into the three confirmed live-cycle Ollama consumers: `agents/critic.py` (`query_llm(prompt, timeout=LIVE_LLM_TIMEOUT_SECONDS)`), `news/layer3_spike.py`, `news/layer4_weekly.py`. This doesn't kill an orphaned thread, but it bounds the *duration* of the orphaned semaphore hold to 20s instead of the previous unbounded default (60s), shrinking the cross-cycle pileup window item 67 described. A true cancellable-request pattern remains unimplemented — noted as still open in the bug list.
+
+#### Verification Summary
+`ast.parse()` on all seven touched files; live `import` of the full chain (`agents.orchestrator`, `agents.critic`, `news.layer3_spike`, `news.layer4_weekly`, `agents.news_sentiment`, `scripts.run_paper`) with no `ImportError`; the two threaded tests described above; confirmed `PHASE1_AGENT_TIMEOUT_SECONDS`/`TICKER_TIMEOUT_SECONDS`/`LIVE_LLM_TIMEOUT_SECONDS` resolve to the expected values (100/150/20) through `core.config`.
+
+---
+
+### Session 39: Ollama Concurrency Burst Sources + SL/TP Starvation Risk — Identified, Not Yet Implemented
+**Status:** Audit only. All three findings below are open/unimplemented. Verified against actual uploaded files (`critic.py`, `news_sentiment.py`, `client.py`, `news_ingest.py`, `orchestrator.py`, `run_paper.py`), not description-level.
+**Files to be modified (not yet touched):** `agents/news_sentiment.py`, `llm/client.py`, `scripts/run_paper.py`, `agents/orchestrator.py`
+
+**Context:** Revisited Session 36's "Problem 1 (Ollama semaphore) deferred pending GPU/faster backend decision" now that the hardware question is resolved (CPU-only, no GPU, confirmed by user). Classified which agents/layers actually drive Ollama concurrency, then verified against source.
+
+**Confirmed sources of live-cycle Ollama contention (all share one global `Semaphore(2)` in `llm/client.py`):**
+- **Critic** — one call per actionable ticker per cycle, unthrottled by design.
+- **Layer 3** (spike detector) — called every cycle for every ticker, but only reaches Ollama when the ATR/volume gate fires (~5-20 real events/day across the watchlist).
+- **Layer 4** (weekly bias) — nominally throttled to once/hour/ticker via `_last_run_layer4` + `_layer_timer_lock`.
+- Layers 1, 2, 5 confirmed **not** a live-cycle contributor: moved to the sequential pre-market batch (Session 37), and Layer 2 additionally gated by `if not _is_market_open()` inside `news_sentiment.py`.
+
+**Finding 1 (open): Layer 4 startup burst / hourly re-sync, not a true 1-hour stagger.**
+```python
+with _layer_timer_lock:
+    run_layer4 = time.monotonic() - _last_run_layer4.get(ticker, 0.0) >= _LAYER4_INTERVAL_SECONDS
+```
+`.get(ticker, 0.0)` means every ticker not yet in the dict evaluates as "due" simultaneously on the first cycle after process start. All 20 tickers' `_last_run_layer4[ticker]` timestamps then land in the same few-minute window, so they become "due again" together roughly every hour thereafter — a recurring 20-ticker burst through the 2-slot semaphore, not the intended smooth per-ticker throttle.
+- **Proposed fix (not implemented):** stagger initial timestamps on first sight of a ticker (e.g. spread across `_LAYER4_INTERVAL_SECONDS` instead of defaulting to `0.0`) so the 20 tickers desynchronize instead of clustering.
+
+**Finding 2 (open): `future.result(timeout=...)` does not cancel the underlying thread.**
+Phase 1's inner pool (`agents/orchestrator.py`, 30s) and the outer ticker pool (45s) both abandon a call on timeout without killing the thread. A thread still blocked on `with _ollama_semaphore:` keeps running and can still occupy a slot when the *next* 5-minute cycle's Critic/Layer 3/Layer 4 calls start queuing — i.e. genuine cross-cycle Ollama pileup, not just within-cycle contention.
+- **Proposed fix (not implemented):** not yet designed in detail; needs either a cancellable request pattern (e.g. passing a cancellation event into `_query_ollama()` that aborts the wait) or accepting the orphaned-thread cost and sizing timeouts/semaphore around it.
+
+**Finding 3 (open): SL/TP monitoring can be fully starved by a long `run_all()`.**
+Verified in `run_paper.py`: the main loop is synchronous and completion-gated — `last_pipeline_run = time.monotonic()` is only stamped after `run_all()` returns, so cycles cannot overlap (confirms raising the 30s/45s timeouts is safe from a scheduling-collision standpoint). But `run_maintenance()` (SL/TP breach + reconciliation, meant to run every ~60s) and the long-term `check_sl_tp_exits()` (meant every 300s) live in the *same* `while True` loop as `run_all()`. If `run_all()` blocks for an extended period (worst-case estimated ~240s of pure LLM queue time under a Layer 4 burst + elevated Layer 3/Critic load — directional, not measured on this hardware), neither SL/TP check runs at all during that window. This risk is worst on exactly the kind of volatile day that produces the worst-case LLM load in the first place.
+- **Proposed fix (not implemented):** decouple `run_maintenance()`/`check_sl_tp_exits()` onto their own thread or loop, independent of `run_all()`'s blocking calls, so stop-loss protection can't go dark regardless of pipeline cycle duration.
+
+**Recommended implementation order (not design-locked, pending user sign-off):** (1) Layer 4 stagger fix — cheapest, prevents the burst outright; (2) decouple SL/TP monitoring — closes the actual safety risk; (3) raise Phase 1 (30s→~90-120s) and outer (45s→~150s) timeouts as a secondary safety margin, only once 1 and 2 are in place, since timeout increases alone would extend SL/TP starvation further without fixing it.
+
+**Verified as non-issue (downgraded from a suspected gap):** Layer 2 in `news_sentiment.py` has no per-session throttle dict (unlike Layers 1/4/5) and relies solely on `if not _is_market_open()`. Checked against `Orchestrator.run_all()`, which has its own top-level `if not _is_market_open(): return {}` guard preventing `run_ticker()` (and therefore `NewsSentimentAgent.run()`) from ever executing while the market is closed. Currently dead code, not reachable in the live `run_paper.py` call chain. Recommended for defense-in-depth hardening (Layer 2 shouldn't rely on a guarantee made two call-layers up by its caller), but not an active bug.
+
+---
+
+### Session 38 (continued): FundamentalAgent Pre-Market Cache — Implemented and Verified
+**Status:** Implemented. Verified via scratch-DB cache round-trip and a mocked `FundamentalAgent.run()` test.
+**Files modified:** `data/storage/db.py`, `news/news_ingest.py`, `agents/fundamental.py`
+**Files created:** `data/storage/fundamentals_store.py`
+
+**Root-cause correction found during the "verify before implementing" step:** `data/feeds/fundamentals_feed.py::fetch_fundamentals()` already carried an in-memory `_cache` dict with a 6-hour TTL (`_CACHE_TTL_SECONDS`), keyed by ticker, shared across both the intraday and long-term `Orchestrator` instances in the same process. This means the design doc's "1,560 yfinance calls/day" figure (12 cycles/hour × 20 tickers × 6.5 hours, assuming zero caching) did not reflect the actual code — real live-fetch volume was already throttled to about once per ticker per 6 hours. The two problems that genuinely remained: (1) that cache is in-process only, so every restart re-fetches all 20 tickers from cold; (2) because all 20 tickers' 6-hour windows were populated close together near process startup, they also expire close together, producing a periodic ~20-ticker pile-up on `_yf_lock` inside the 10-ticker parallel phase roughly every 6 hours — smaller than the original framing implied, but still exactly the kind of contention the Session 37 `warm_up()` fix was meant to eliminate for candles. Moving the fetch to the sequential pre-market batch and persisting it in SQLite (24h TTL, refreshed once daily) fixes both, and was implemented as designed.
+
+**What was implemented:**
+- `data/storage/db.py` — `fundamentals_cache` table, keyed on `ticker` (`PRIMARY KEY`). Stores all 8 `FundamentalData` fields (`pe_ratio`, `pb_ratio`, `revenue_growth`, `earnings_growth`, `debt_to_equity`, `free_cash_flow`, `market_cap`, `sector`), not just the 5 the design doc listed — `FundamentalAgent.run()` puts the full `FundamentalData.__dict__` into `AgentOutput.raw_data`, so caching only the scored subset would have made the cache-hit and live-fetch code paths produce different `raw_data` shapes.
+- `data/storage/fundamentals_store.py` (new) — `save_fundamentals_cache(data: FundamentalData)` (upsert by ticker) and `get_fundamentals_cache(ticker, max_age_hours=24)` (returns `None` on cache miss or stale `fetched_at`).
+- `news/news_ingest.py::run_premarket_news_fetch()` — fundamentals fetch (`fetch_fundamentals()` + `save_fundamentals_cache()`) added as the first step per ticker, before Layer 2, in its own try/except so a fundamentals failure doesn't block the news layers for that ticker.
+- `agents/fundamental.py::run()` — calls `get_fundamentals_cache(ticker)` first; on a hit, skips `fetch_fundamentals()` entirely; on a miss/stale result, falls back to the live fetch and writes the result to the cache so the next cycle (or a same-day restart) reads from SQLite.
+
+**Verification:** scratch SQLite DB confirmed `save_fundamentals_cache()`/`get_fundamentals_cache()` round-trip correctly, including a miss on an unknown ticker and an expiry check with `max_age_hours=0`. A mocked `FundamentalAgent.run()` test (fake `fetch_fundamentals` counting calls) confirmed exactly one live fetch across two `run()` calls for the same ticker — the second call served entirely from cache, matching the intended zero-yfinance-during-market-hours behavior on a warm cache.
+
+---
+
+### Session 38: FundamentalAgent Pre-Market Cache — Design Locked
+
+#### Root Cause
+
+`FundamentalAgent.run()` calls `fetch_fundamentals(ticker)` inside the 10-ticker `ThreadPoolExecutor` parallel phase on every 5-minute pipeline cycle. `fetch_fundamentals()` routes through `_yf_lock` in `price_feed.py`. P/E, P/B, revenue growth, earnings growth, and D/E are quarterly SEC filing metrics — they do not change intraday or even daily. The result is:
+
+```
+12 cycles/hour × 20 tickers × 6.5 hours = 1,560 yfinance fundamental calls per day
+All through _yf_lock during the most congested parallel phase
+```
+
+This is pure waste and contributes to `_yf_lock` contention in the parallel phase even with the `warm_up()` pre-fetch fix, since fundamentals are not part of the candle cache.
+
+#### Design
+
+**Step 1: Pre-market batch fetches fundamentals first (before Layer 2)**
+
+In `news/news_ingest.py::run_premarket_news_fetch()`, add a fundamentals fetch as the first step per ticker, before Layer 2. Sequential, one ticker at a time, no lock contention possible. Results written to a new `fundamentals_cache` SQLite table.
+
+```
+8:15am  per ticker:
+  fetch_fundamentals(ticker) → write to fundamentals_cache SQLite   ← NEW
+  Layer 2 (run_premarket_analysis)
+  Layer 1 (run_quarterly_analysis)
+  Layer 5 (run_monthly_analysis)
+```
+
+**Step 2: New `fundamentals_cache` SQLite table**
+
+In `data/storage/db.py`, add:
+
+```sql
+CREATE TABLE IF NOT EXISTS fundamentals_cache (
+    ticker          TEXT PRIMARY KEY,
+    pe_ratio        REAL,
+    pb_ratio        REAL,
+    revenue_growth  REAL,
+    earnings_growth REAL,
+    debt_to_equity  REAL,
+    fetched_at      TEXT NOT NULL
+);
+```
+
+**Step 3: New `data/storage/fundamentals_store.py`**
+
+Two functions:
+- `save_fundamentals_cache(ticker, data)` — writes or replaces the row for the ticker
+- `get_fundamentals_cache(ticker, max_age_hours=24)` — returns the cached row if `fetched_at` is within `max_age_hours`, else returns `None`
+
+**Step 4: `FundamentalAgent` reads from SQLite, falls back to live fetch**
+
+In `agents/fundamental.py`, at the top of `run()`:
+1. Call `get_fundamentals_cache(ticker)` — if result exists and is fresh, use it directly to build signals, skip `fetch_fundamentals()` entirely
+2. If cache miss or stale (older than 24 hours), call `fetch_fundamentals(ticker)` as before and write result to cache via `save_fundamentals_cache()`
+
+This means market-hours pipeline cycles never touch yfinance for fundamentals. On the rare occasion the cache is stale mid-day (e.g. first ever run, or process started after 8:50am cutoff with no pre-market batch), it falls back gracefully.
+
+#### Effect
+
+```
+Before: 1,560 yfinance fundamental calls/day through _yf_lock during parallel phase
+After:  20 sequential yfinance calls at 8:15am + 0 during market hours
+        FundamentalAgent during market hours = instant SQLite read
+```
+
+Combined with the `warm_up()` pre-fetch fix from Session 37, the parallel phase now has zero yfinance calls of any kind during normal operation.
+
+#### API congestion status after this fix
+
+| API | Status |
+|---|---|
+| Finnhub | Fixed Session 34 — semaphore + TTL cache |
+| yfinance candles | Fixed Session 37 — sequential pre-fetch before parallel phase |
+| yfinance fundamentals | Fixed this session — pre-market batch, SQLite reads during market hours |
+| Ollama | Deferred (Problem 1) — no GPU, semaphore makes queuing orderly |
+| Benzinga | Fixed Session 36 — key configured, primary source |
+| Alpaca | Fine — one call per minute, well within rate limits |
+
+Zero back-to-back API hits during market hours after this session is implemented.
+
+---
+
+### Session 37: Problem 2 and Pre-Market Batch Redesign — Implemented and Verified
+**Status:** Both Session 36 design-locked items now implemented. Verified via direct module import and a scratch-DB checkpoint round-trip.
+**Files modified:** `agents/orchestrator.py`, `news/news_ingest.py`, `llm/client.py`, `news/layer1_quarterly.py`, `news/layer2_premarket.py`, `news/layer5_monthly.py`, `data/storage/db.py`, `data/storage/news_store.py`, `scripts/run_paper.py`
+
+#### Problem 2 Fix: PriceFeedAgent Top-Down Pre-Fetch — Implemented
+`agents/orchestrator.py` — imported `warm_up` from `data/cache/market_data_cache.py` and `INTRADAY_TIMEFRAMES`/`LONGTERM_TIMEFRAMES` from `core/constants.py`. `run_all()` now calls `warm_up(WATCHLIST, timeframes)` (mode-specific timeframe set) right before the `ThreadPoolExecutor(max_workers=10)` launches, every cycle — not just once at script startup as `run_paper.py` already did. This is what actually eliminates lock contention at the recurring 10:30am/1:30pm timeframe collisions, since the one-time startup warm-up only helped the very first cycle.
+
+**Post-implementation correction (user-applied):** `data/cache/market_data_cache.py::warm_up()` originally called `get_candles(ticker, tf, force_refresh=True)`. Now that `warm_up()` runs every `run_all()` cycle rather than once at startup, forcing a refresh on every call would re-fetch every ticker/timeframe from yfinance every cycle regardless of TTL — including H4/D1/W1 timeframes that don't need refreshing every 5 minutes — defeating the cache entirely and hammering yfinance unnecessarily. Changed to `force_refresh=False` so `warm_up()` respects each timeframe's TTL: only genuinely stale entries are re-fetched (sequentially, one `_yf_lock` holder at a time), fresh ones return from cache instantly. The lock-contention fix is unaffected — whatever refreshes do happen still happen sequentially before the parallel Phase 1 fan-out, never from 50 concurrent threads.
+
+#### Pre-Market Batch Redesign — Implemented
+`news/news_ingest.py::run_premarket_news_fetch()` rewritten to run Layers 2 (`run_premarket_analysis`), 1 (`run_quarterly_analysis`), and 5 (`run_monthly_analysis`) sequentially per ticker, with all five locked mitigations:
+1. **Ollama timeout cap** — `llm/client.py::query_llm()`/`_query_ollama()`/`_query_claude()` gained a `timeout: int = 60` parameter; `run_quarterly_analysis()`, `run_premarket_analysis()`, `run_monthly_analysis()`, and `news_ingest.py`'s `_classify_horizon()` all gained an `llm_timeout` parameter forwarded to `query_llm()`. The batch passes `timeout=_PREMARKET_LLM_TIMEOUT` (25s) on every call.
+2. **Per-layer exception isolation** — each layer call (and the Layer 2 article ingest loop) wrapped in its own try/except inside the per-ticker loop.
+3. **Session flag population** — on success, the batch writes directly into `agents.news_sentiment`'s `_last_run_layer1[ticker]`/`_last_run_layer5[ticker]` (under the existing `_layer_timer_lock`) so the first live pipeline cycle doesn't immediately re-run them.
+4. **Per-ticker SQLite checkpoint** — new `premarket_checkpoints` table (`data/storage/db.py`, keyed `(ticker, batch_date)`) with `is_premarket_checkpoint_complete()`/`save_premarket_checkpoint()` in `data/storage/news_store.py`; a restart mid-batch skips tickers already completed for today's date (ET).
+5. **Market-open abort guard** — `_is_market_open()` checked before starting each ticker; if the market has opened, logs a warning and breaks out of the remaining tickers.
+
+`scripts/run_paper.py` — `_PREMARKET_CUTOFF` changed from `9:20am` to `8:50am` to match the longer three-layer batch (~80s/ticker worst case, ~27 min for 20 tickers); comments updated to note the recommended 8:15am start.
+
+**Bug caught during implementation (not in original design):** `news/layer2_premarket.py` imports `sentiment_label` from `news/news_ingest.py` at module level. Adding module-level imports of the three layer functions back into `news_ingest.py` would have created a circular import (`news_ingest` ↔ `layer2_premarket`), breaking on the very first ticker. Fixed by deferring those three imports (plus `_is_market_open` and the `news_sentiment` session-flag dicts) to call time inside `run_premarket_news_fetch()`, the same defensive local-import pattern `news_sentiment.py` already uses for `_is_market_open`.
+
+**Verification:** `ast.parse()` on all touched files; live `import` of `agents.orchestrator` and `news.news_ingest` together (no `ImportError`); `inspect.signature()` confirmed all three layer functions accept `llm_timeout`; a scratch SQLite DB confirmed `save_premarket_checkpoint()`/`is_premarket_checkpoint_complete()` round-trip correctly (same-day True, different-day False).
+
+Two follow-up review passes raised concerns already addressed by this implementation (layer functions not accepting `llm_timeout`; `news_store.py` missing the checkpoint functions) — both were checked against the current working tree and confirmed already fixed; no further action needed.
+
+---
+
+### Session 36: Live Market Clash Analysis + Problem 2 and 4 Fixes — Design Locked
+**Status:** Problem 2 design locked, Claude Code prompt written. Problem 4 resolved (Benzinga key confirmed active, `.env` updated, guard added). Problem 1 deferred. Problem 3 confirmed already fixed. Pre-market batch redesign locked. Session 35 layer audit gaps documented.
+**Files to be modified:** `agents/orchestrator.py` (Problem 2), `data/feeds/news_feed.py` (Problem 4 guard), `news/news_ingest.py` (pre-market batch redesign), `scripts/run_paper.py` (startup time + cutoff), `.env` (Benzinga key)
+**Files verified this session:** `news/layer1_quarterly.py`, `news/layer2_premarket.py`, `news/layer3_spike.py`, `news/layer4_weekly.py`, `news/layer5_monthly.py`, `agents/news_sentiment.py`
+
+#### Clash Analysis — Live Market Hours (Full Audit)
+
+Six concurrency clashes identified across all agents and layers:
+
+| Clash | Agents | Severity | Status |
+|---|---|---|---|
+| Ollama serialization — all 10 ticker threads pile into single CPU model | Layer 3, Layer 4, Critic | High | Deferred (Problem 1) — no GPU |
+| yfinance lock contention — all Phase 1 agents fighting `_yf_lock` at timeframe collision points | TechnicalAgent, MarketRegimeAgent, FundamentalAgent | Moderate | Design locked (Problem 2) |
+| Finnhub semaphore wait eating Phase 1 timeout | Layer 3 via NewsSentimentAgent | Moderate | Fixed Session 34 |
+| Session flag first-cycle race — Layers 1 and 5 double-fire on first cycle | NewsSentimentAgent | Low | Deferred — one extra call only |
+| Dual orchestrator Phase 4 on same ticker | Critic, ExecutionAgent | Low | By design — Alpaca handles concurrent orders |
+| SQLite write contention | All agents | Very low | WAL mode mitigates sufficiently |
+
+#### Problem 2 Fix: PriceFeedAgent Top-Down Pre-Fetch — Design Locked
+
+**Root cause:** With 10 tickers running in parallel and each spawning 5 Phase 1 agent threads, up to 50 threads compete for `_yf_lock` simultaneously. At timeframe collision points (10:30am: M5+M15+H1 expire together; 1:30pm: M5+M15+H1+H4 all expire together), the contention is worst. The last thread in the queue may wait 20+ seconds before getting through the lock, consuming most of the 30-second Phase 1 budget before doing any real work.
+
+**Solution locked:** Add `warm_up(WATCHLIST, all_timeframes)` at the start of `run_all()` before the `ThreadPoolExecutor` launches. This pre-fetches all candles for all 20 tickers across all active timeframes sequentially. One thread, one lock holder at a time. Completes in ~20-30 seconds. All Phase 1 agents then read from cache during the parallel phase — zero yfinance calls, zero lock contention regardless of how many timeframes have expired.
+
+```
+run_all() starts
+  warm_up(WATCHLIST, all_timeframes)   ← sequential, 20-30s, fills cache
+  ThreadPoolExecutor(max_workers=10) launches
+    TechnicalAgent    → get_candles() → cache hit → instant
+    MarketRegimeAgent → get_candles() → cache hit → instant
+    FundamentalAgent  → get_candles() → cache hit → instant
+  Zero yfinance calls during parallel phase
+```
+
+Handles all collision scenarios automatically since it refreshes everything regardless of what expired.
+**Files:** `agents/orchestrator.py` — add `warm_up()` call at start of `run_all()`. Verify `data/cache/market_data_cache.py` covers all timeframes in `INTRADAY_TIMEFRAMES + LONGTERM_TIMEFRAMES` before implementing.
+
+#### Problem 4 Fix: Benzinga Key — Resolved
+
+**Root cause:** `BENZINGA_API_KEY` was absent from `.env`. Every cycle made a wasted HTTP round trip to Benzinga (receiving nothing), logged a warning, then fell through to Finnhub, adding unnecessary latency and Finnhub pressure.
+
+**Confirmed working:** `curl` test against `https://api.benzinga.com/api/v2/news?token=<key>&tickers=AAPL&pageSize=5` returned 5 real articles with full JSON structure, stocks tags, importance ranks. Key `***REMOVED-BENZINGA-API-KEY***` is active.
+
+**Fix applied:**
+- `BENZINGA_API_KEY=***REMOVED-BENZINGA-API-KEY***` added to `.env`
+- One-line guard added to `_fetch_ticker_news()` in `news_feed.py`:
+  ```python
+  if not BENZINGA_API_KEY:
+      return _fetch_ticker_news_finnhub(ticker, from_dt, to_dt)
+  ```
+  Protects against future runs where key might accidentally be missing.
+
+**Effect:** Benzinga now primary news source for all 20 tickers. Finnhub only fires as genuine fallback when Benzinga has no articles for a specific ticker. Finnhub semaphore pressure drops dramatically.
+
+#### Pre-Market Batch Redesign — Design Locked
+
+**Startup time changed:** 8:15am (was 9:05am). `_PREMARKET_CUTOFF` changed from `9:20am` to `8:50am` in `run_paper.py`.
+
+**Layers 1 and 5 moved into pre-market batch:** `run_premarket_news_fetch()` in `news/news_ingest.py` now runs Layers 2, 1, and 5 sequentially per ticker. After each layer completes for a ticker, the corresponding session flag (`_last_run_layer1[ticker]`, `_last_run_layer5[ticker]`) is populated so market-hours pipeline cycles skip them correctly.
+
+**Timing at worst case:**
+```
+8:15am  startup, FinBERT pre-warm (~40s)
+8:16am  pre-market batch begins
+        Layer 2 + Layer 1 + Layer 5 per ticker: ~80s worst case
+        20 tickers × 80s = ~27 minutes worst case
+8:43am  batch complete (worst case)
+9:30am  market opens — 47-minute buffer
+9:35am  first pipeline cycle: Layer 1 skipped, Layer 2 skipped, Layer 5 skipped
+        Only Layer 3 (self-gated) and Layer 4 (hourly) run
+```
+
+**Five crash mitigations locked:**
+
+1. Ollama timeout cap: `query_llm()` needs a configurable `timeout` parameter. Pre-market batch passes `timeout=25` seconds. If Ollama does not respond in 25 seconds, skip that article and continue rather than blocking the entire batch.
+2. Per-layer exception isolation: each layer call per ticker wrapped in its own `try/except`. One layer failure for one ticker skips that layer but does not abort the batch or block remaining tickers.
+3. Session flag population from batch: after successful layer run inside the batch, explicitly write `_last_run_layer1[ticker] = time.monotonic()` (imported from `news_sentiment.py`). Without this, the first pipeline cycle re-runs Layers 1 and 5 immediately.
+4. Per-ticker SQLite checkpoint: write a `premarket_completed` record to a new `premarket_checkpoints` table (or a `news_events` metadata row) after each ticker finishes. On restart, skip already-completed tickers.
+5. Market-open abort guard: check `_is_market_open()` before starting each ticker in the batch. If market has opened, log a warning and abort remaining tickers rather than running over into market hours.
+
+**Files:** `news/news_ingest.py`, `scripts/run_paper.py`, `llm/client.py` (timeout param), `agents/news_sentiment.py` (export session flag dicts)
+
+#### Items Not Discussed This Session (Carried Forward)
+
+- **FinBERT loading from `refs/pr/29`:** still fragile, still functional. Last verified Session 34. No action taken.
+- **Alpaca broker quadruple init:** cosmetic. Still deferred.
+- **MemoryAgent 0 keys loaded:** no closed trades yet to trigger write-back. Will resolve naturally once first trades close.
+- **Layer 4 and 5 reading old `news` table not `news_events`:** gap identified in Session 35 layer audit. Not discussed for fix this session. Deferred.
+- **Dual orchestrator running Layer 1 twice per ticker:** both INTRADAY and LONG_TERM call Layer 1 independently. Low-severity since session flag throttles it to one call per process lifetime anyway. Deferred.
+- **Layer 3 `fetch_candles` bypassing `_yf_lock`:** gap from Session 35 audit. Deferred.
+
+---
+
+### Session 35: News Layer Run Frequency Throttling — Implemented and Verified
+**Status:** Complete. All five layers audited and verified. `agents/news_sentiment.py` verified against actual file.
+**Files modified:** `agents/news_sentiment.py`
+**Files audited (no change):** `news/layer1_quarterly.py`, `news/layer2_premarket.py`, `news/layer3_spike.py`, `news/layer4_weekly.py`, `news/layer5_monthly.py`
+
+Layer frequency gating implemented in `NewsSentimentAgent.run()` with three module-level dicts (`_last_run_layer1`, `_last_run_layer4`, `_last_run_layer5`) and `_layer_timer_lock`. Layer 1 and 5: once per session per ticker (key-absence gate). Layer 2: skipped entirely during market hours via local import of `_is_market_open` (top-level import avoided to prevent circular import crash — `orchestrator.py` already imports `NewsSentimentAgent` at module level). Layer 3: unchanged, runs every cycle, self-gated by ATR/volume. Layer 4: once per hour per ticker via `time.monotonic()` elapsed check. Reduces peak Ollama load from ~140 calls per 5-minute cycle to 20-40.
+
+Five-layer audit gaps identified (all deferred):
+- Layer 4 and 5 read from old `news` table via `get_recent_news()` — will not see `news_events` pre-market context
+- Layer 1 runs in both INTRADAY and LONG_TERM modes — doubles Ollama calls (mitigated by once-per-session throttle)
+- Layer 3 `fetch_candles` bypasses `_yf_lock` in `price_feed.py`
+- First-cycle race: both orchestrators can read `ticker not in _last_run_layer1` as True simultaneously before either writes the key — one extra Ollama call on first cycle only
+
+---
 
 ### Session 34: News Architecture Overhaul + Cycle Optimization — Implemented (WebSocket layer blocked, REST+cache substituted)
 **Status:** Implemented and verified live. `scripts/test_finnhub_ws.py` run as the pre-implementation gate — **failed**: Finnhub returned `"You don't have access to this resource"` for `subscribe-news`, meaning WebSocket news streaming is not available on the current Finnhub plan. Per explicit user decision, proceeded with the design's own documented fallback (REST + semaphore + TTL cache) in place of Decision 3's Layer 2 WebSocket, implementing everything else in the design as locked. One new bug (Ollama concurrency) was found during live verification and fixed as an addendum — see below.
@@ -1893,7 +2485,77 @@ Every swap is a single config change. Architecture stays identical.
 
 60. **Ollama concurrency — new bug found during Session 34 live verification, not in original scope.** Once Bug 52 (Finnhub hammering) was fixed, live reruns still showed Phase-1 `news`/`regime` timeouts — now caused by Ollama itself. `news/layer2_premarket.py::run_premarket_analysis()` calls `query_llm()` unconditionally for every ticker every cycle; up to 10 concurrent calls queue behind Ollama's single serialized model instance and tail requests exceed both Ollama's 60s timeout and the orchestrator's 30s Phase-1 timeout. **Mitigated, not fully resolved Session 34:** `llm/client.py` — `threading.Semaphore(2)` added around the Ollama POST call, same pattern as item 52's fix. Queuing is now orderly but total Ollama compute time is unchanged — a local 3B CPU model serving 10 tickers within a 30s window is a genuine throughput ceiling. Timeouts were still observed in the final verification run. **Open for a future session:** raise the Phase-1 timeout, reduce how many tickers call the LLM per cycle, or switch to a faster backend (Claude API via `ANTHROPIC_API_KEY`, or GPU-accelerated Ollama).
 
-**Net: 5 of 6 original Session 34 bugs resolved or verified-not-applicable (items 51, 53, 54 were already fine; item 52 fixed via the documented fallback; item 55 still deferred as designed). All 4 design decisions addressed (items 56-59) — 3 fully implemented, 1 (Decision 3) partially implemented with the WebSocket sub-piece substituted per user decision. 1 new bug found during verification (item 60), mitigated but not fully resolved — genuine hardware throughput ceiling, not a code defect.**
+### Consolidated Open Bug List: Session 36 Clash Analysis + Problem Fixes
+
+61. ~~**Benzinga key absent — wasted HTTP round trip every cycle (Problem 4).**~~ **Fixed Session 36.** Key `***REMOVED-BENZINGA-API-KEY***` confirmed active via curl test returning 5 real AAPL articles. Added to `.env`. One-line guard added to `_fetch_ticker_news()` in `news_feed.py` to skip Benzinga call when key absent. Benzinga now primary news source for all 20 tickers; Finnhub semaphore pressure drops significantly.
+
+62. ~~**yfinance lock contention — all Phase 1 agents fighting `_yf_lock` at timeframe collision points (Problem 2).**~~ **Fixed Session 37.** `warm_up(WATCHLIST, timeframes)` now runs at the start of every `run_all()` cycle in `agents/orchestrator.py`, mode-specific timeframe set, before `ThreadPoolExecutor` launches — not just once at script startup.
+
+63. ~~**Pre-market batch crash risks — five mitigations not yet implemented.**~~ **Fixed Session 37.** `news/news_ingest.py::run_premarket_news_fetch()` now runs Layers 2, 1, 5 sequentially per ticker with all five mitigations: 25s Ollama timeout cap (`llm/client.py`), per-layer exception isolation, session flag population from batch (writes into `agents.news_sentiment`'s dicts), per-ticker SQLite checkpoint (`premarket_checkpoints` table), market-open abort guard.
+
+64. **Ollama concurrency ceiling (Problem 1) — deferred.** No GPU available. Semaphore(2) in `llm/client.py` makes queuing orderly but does not increase throughput. Will revisit if Claude API backend enabled or hardware changes. Not a blocker for paper trading given pre-market batch redesign reduces market-hours Ollama load to Layer 3 spikes + Layer 4 hourly + Critic only.
+
+**Net: 3 of 4 problems fully fixed (Problems 2, 4, plus Problem 3 confirmed already fixed in Session 34). 1 deferred (Problem 1, no GPU). Pre-market batch redesign (five mitigations) also fully implemented Session 37.**
+
+---
+
+### Consolidated Open Bug List: Session 41 — Orchestrator Threading Bugs
+
+77. ~~**Phase 1 pool's `with` block silently defeats `PHASE1_AGENT_TIMEOUT_SECONDS` (High).**~~ **Fixed Session 41.** `agents/orchestrator.py`'s `run_ticker()` — exiting `with ThreadPoolExecutor(...) as p1_pool:` called `shutdown(wait=True)`, blocking until every thread finished including ones already given up on via `fut.result(timeout=...)`. Confirmed in production logs: 35s-3+min gap between a "timed out" log line and the pipeline continuing. Fixed by dropping the `with` block and calling `p1_pool.shutdown(wait=False)` after the loop. Verified: threaded test confirmed pool releases in ~1s instead of blocking ~5s for a straggler.
+
+78. ~~**`run_all()`'s outer per-ticker timeout is dead code (High).**~~ **Fixed Session 41.** Two sub-bugs: (a) same `with`-block shutdown(wait=True) issue; (b) `as_completed(futures)` only yields a future after it's already finished, so `future.result(timeout=TICKER_TIMEOUT_SECONDS)` could never actually raise `TimeoutError` — the timeout and "skipping ticker" log were unreachable. Fixed by replacing `as_completed()` with a `concurrent.futures.wait(timeout=1, return_when=FIRST_COMPLETED)` polling loop and explicit per-future deadlines via `time.monotonic()` (imported as `from time import monotonic` to avoid colliding with the file's existing `datetime.time` import). Verified: simulated FAST/MED/SLOW(10s) tasks with a 2s deadline confirmed the loop returns in ~2s with SLOW correctly abandoned, instead of blocking the full 10s.
+
+**Net: both bugs from this session's audit fixed and verified with targeted threaded reproductions. Grep re-confirmed no other `with ThreadPoolExecutor` or `as_completed` usage anywhere else in the file.**
+
+---
+
+### Consolidated Open Bug List: Session 40 — Manual Audit Session
+
+70. ~~**`risk/circuit_breakers.py`: `filled_at=None` crashes `check_circuit_breakers()` (Critical — active crash).**~~ **Fixed Session 40.** `t.get("filled_at", "")[:10]`'s default only covers a missing key, not an explicit `None` value (e.g. an unfilled order) — `None[:10]` raised `TypeError`, crashing `check_circuit_breakers()`, which crashes `validate_plan()` and the standalone maintenance loop. Fixed: `(t.get("filled_at") or "")[:10]`. Verified with the exact crash condition.
+
+71. ~~**`risk/circuit_breakers.py`: `_get_portfolio_value()` constructs a new `AlpacaBroker()` every call.**~~ **Fixed Session 40.** Runs once per ticker's risk validation and once per maintenance-loop pass — re-initializing a broker connection many times per cycle. Fixed with a lazy-initialized module-level singleton, same pattern as `execution/order_router.py`'s `_broker`. Verified: 3 calls constructed the broker exactly once.
+
+72. ~~**`agents/critic.py` Bug A: `query_llm()` returning `None` crashes `_parse_response()` (High — None-crash risk).**~~ **Fixed Session 40.** The `try/except` around `query_llm()` only catches raised exceptions; a `None` return (Session 39+ behavior) sailed past it into `_parse_response(None).strip()`. Fixed with an explicit `if response is None:` check applying the same fail-open default.
+
+73. ~~**`agents/critic.py` Bug B: fallback keyword scan always returns `approved=True` on malformed JSON (High — false-positive trade approvals).**~~ **Fixed Session 40.** `"approve" in lower` matched the literal JSON key name `"approved"` as a substring whenever `json.loads()` failed, regardless of the actual `true`/`false` value — root cause of logs showing "Critic APPROVED the trade" alongside `"approved": false`. Fixed with a targeted `"approved"\s*:\s*(true|false)` regex recovery step tried first, and the JSON key stripped from the text before the last-resort keyword scan. Verified with 5 cases including the exact bug (malformed JSON with `approved:false` — previously misparsed `True`, now correctly `False`).
+
+74. ~~**`news/layer3_spike.py`: `query_llm()` returning `None` crashes on `.strip()` (High — None-crash risk).**~~ **Fixed Session 40.** Same root cause as critic.py Bug A. Fixed: `if llm_resp is None:` logs a warning, sets `llm_resp = ""` — existing downstream logic already handles empty string correctly.
+
+75. ~~**`news/layer4_weekly.py`: `query_llm()` returning `None` crashes on `.lower()` (High — None-crash risk).**~~ **Fixed Session 40.** Fixed: `if llm_response is None:` logs a warning and `return []` — Layer 4 has no independent fallback score (unlike Layer 2/3), so skipping the cycle is safer than manufacturing a signal from nothing.
+
+76. ~~**`execution/broker/alpaca.py`: sub-penny limit price rejected by Alpaca (Medium — order rejection in production).**~~ **Fixed Session 40.** `"invalid limit_price 322.17999267578125 ... sub-penny increment does not fulfill minimum pricing criteria"` — `plan.entry_price` (a float-precision artifact) passed unrounded into `LimitOrderRequest`. Fixed: `limit_price=round(plan.entry_price, 2)`, confirmed as the final value before submission. `submit_stop_order()`'s identical `stop_price` risk also fixed after user confirmation.
+
+**Net: all 5 audit findings (7 fix points across 2 files with 2 bugs each) fixed and verified with targeted reproductions of the original bug, not just import/parse checks. Follow-up `query_llm()` call-site audit found no other unguarded sites — 4 other call sites were already guarded from earlier sessions.**
+
+---
+
+### Consolidated Open Bug List: Session 39 — Ollama Concurrency Audit
+
+66. ~~**Layer 4 startup burst — `_last_run_layer4.get(ticker, 0.0)` default causes all 20 tickers to re-synchronize onto the same hourly Ollama burst (High).**~~ **Fixed Session 39.** `agents/news_sentiment.py` — `_layer4_stagger_offset(ticker)` (`zlib.crc32(ticker) % 3600`, stable across restarts unlike builtin `hash()`) gives each first-seen ticker a deterministic due-time somewhere in the next hour instead of "already due." Verified: 14-ticker sample spread cleanly across the window with no collisions.
+
+67. ~~**Orphaned semaphore-holding threads on `future.result()` timeout — cross-cycle Ollama pileup (Medium-High).**~~ **Mitigated Session 39** (not fully fixed — true cancellation still not designed). `core/config.py` added `LIVE_LLM_TIMEOUT_SECONDS=20`, threaded into all three live-cycle Ollama consumers (`agents/critic.py`, `news/layer3_spike.py`, `news/layer4_weekly.py`). Bounds how long an orphaned thread can hold `_ollama_semaphore` after its caller's `future.result()` gave up on it — down from the previous unbounded 60s default — but does not kill the thread outright. A cancellable-request pattern remains a future item if 20s proves insufficient.
+
+68. ~~**SL/TP monitoring can be fully starved by a long `run_all()` (High — risk-management gap, not just a performance issue).**~~ **Fixed Session 39.** `scripts/run_paper.py` — `run_maintenance()` and the long-term `check_sl_tp_exits()` moved onto their own daemon thread (`_maintenance_loop`), fully decoupled from the main loop's `run_all()` calls. Caught and fixed a race this introduced: `agents/orchestrator.py`'s `Orchestrator` gained a `_maintenance_lock` around `_reconcile_closed_trades()`/`check_sl_tp_exits()` since these can now be entered concurrently from the maintenance thread and `run_all()` on the same instance (risk of double-close or duplicate exit order). Verified via a live threaded test (no deadlock/race) and a standalone `_maintenance_loop` test with fake orchestrators. Also enabled raising `PHASE1_AGENT_TIMEOUT_SECONDS` (30→100) and `TICKER_TIMEOUT_SECONDS` (45→150) in `core/config.py`/`agents/orchestrator.py` — safe now that a long `run_all()` no longer risks starving SL/TP checks.
+
+69. **Layer 2 has no per-session throttle dict, unlike Layers 1/4/5 — verified currently non-reachable, recommended hardening only (Low).** Not a bug in practice. Confirmed `news_sentiment.py`'s Layer 2 relies solely on `if not _is_market_open()`, with no `_last_run_layer2` equivalent. Verified against `agents/orchestrator.py`: `run_all()`'s own top-level `if not _is_market_open(): return {}` guard prevents `NewsSentimentAgent.run()` from ever being reached while the market is closed, so this path is dead code today. Recommended for defense-in-depth (Layer 2 shouldn't depend on a guarantee enforced two call-layers up), not urgent. **Still open — out of scope for this implementation pass.**
+
+**Net: 3 of 4 items from this session's audit fully addressed (66, 68 fixed; 67 mitigated, not fully fixed — true cancellation still undesigned), implemented in the recommended order (66 → 68 → timeout increases → 67). Item 69 remains open (low priority, non-reachable today).**
+
+---
+
+### Consolidated Open Bug List: Session 38 — FundamentalAgent API Congestion
+
+65. ~~**FundamentalAgent calling `fetch_fundamentals()` via `_yf_lock` every 5-minute cycle — 1,560 yfinance calls/day for quarterly data (High).**~~ **Fixed Session 38.** Pre-implementation verification found the "1,560 calls/day" figure overstated — `fetch_fundamentals()` already had an in-memory 6-hour TTL cache — but the real gaps (cache lost on every restart; periodic ~20-ticker `_yf_lock` pile-up every ~6h since all tickers' windows expire close together) were real and are now fixed. `fundamentals_cache` SQLite table added (`data/storage/db.py`); new `data/storage/fundamentals_store.py` (`save_fundamentals_cache()`/`get_fundamentals_cache()`, 24h TTL); pre-market batch (`news/news_ingest.py`) now fetches and caches fundamentals as the first step per ticker, before Layer 2; `agents/fundamental.py` reads from the cache first, falling back to a live fetch only on a cold/stale cache. Verified via scratch-DB round-trip and a mocked `FundamentalAgent.run()` test (one live fetch, then cache-served on the second call).
+
+--- or verified-not-applicable (items 51, 53, 54 were already fine; item 52 fixed via the documented fallback; item 55 still deferred as designed). All 4 design decisions addressed (items 56-59) — 3 fully implemented, 1 (Decision 3) partially implemented with the WebSocket sub-piece substituted per user decision. 1 new bug found during verification (item 60), mitigated but not fully resolved — genuine hardware throughput ceiling, not a code defect.**
+
+---
+
+### Consolidated Open Bug List: Session 44 — Progress Audit + Critic-Skip Fix
+
+Read through `progress.md` end to end to find genuinely outstanding work. Items 56-58 (42A/B/C — `premarket_only` plumbing, `scripts/run_premarket.py`, `scripts/run_live.py`) were marked "Design locked, Pending Claude Code" but the code was already fully present and correct in the working tree — confirmed by reading all three files and grepping for the relevant config constants (`PIPELINE_CYCLE_SECS`, `INTRADAY_CYCLE_SECS`, `LONGTERM_LOOP_INTERVAL_SECONDS` in `core/config.py`; `check_sl_tp_exits`/`run_maintenance` on `Orchestrator`). Marked fixed in the Outstanding Stubs table — no code change needed for these three.
+
+Item 63 (43C) was a different story: it was marked **Fixed Session 43** ("early return added ... when `self.premarket_only`"), but `agents/orchestrator.py` had no `self.premarket_only` attribute anywhere, and `self.critic.run()` was still called unconditionally inside `run_ticker()`'s Phase 4 — only `self.execution.run()` was actually gated. The claimed fix had not landed. Fixed for real this session: added an early return immediately after `trade_plan` is built (before the `structured_summary`/`self.critic.run()` lines), returning `results` when `premarket_only=True`. Also deleted the now-unreachable `if premarket_only:` branch that used to guard `self.execution.run()`, since control flow can no longer reach it with `premarket_only=True`. Verified with `ast.parse()` and a manual read of the surrounding block; not exercised against a live Ollama/broker run this session — worth a live `scripts/run_premarket.py` run to confirm Critic calls drop to zero.
 
 ---
 
@@ -1932,8 +2594,37 @@ Every swap is a single config change. Architecture stays identical.
 | ~~**29 (34B)**~~ | ~~`core/constants.py`~~ | ~~Remove `Timeframe.M1` from TechnicalAgent timeframe list.~~ — **Fixed Session 34.** `INTRADAY_TIMEFRAMES` changed to `[M5, M15, H1]`. |
 | ~~**30 (34C)**~~ | ~~`run_paper.py`, `agents/orchestrator.py`, `core/config.py`~~ | ~~Split cycle frequency: 60s maintenance loop + 5-min full pipeline loop.~~ — **Fixed Session 34.** `run_maintenance()` added to `Orchestrator`; `INTRADAY_CYCLE_SECS`/`PIPELINE_CYCLE_SECS` added to `core/config.py`; `run_paper.py` main loop split accordingly. |
 | **31 (34D)** | `data/feeds/news_feed.py`, `data/storage/db.py`, `data/storage/news_store.py`, `news/news_ingest.py`, `news/layer2_premarket.py`, `news/layer3_spike.py` | Three-layer event-driven news architecture — **Partially implemented Session 34.** Pre-implementation gate (`scripts/test_finnhub_ws.py`) failed: `subscribe-news` not available on the current Finnhub plan. Layer 2 (WebSocket) substituted with the design's own documented REST + `threading.Semaphore(2)` + 5-min TTL cache fallback (implemented). Layer 1 (pre-market batch → `news_events`) implemented. Layer 4 (Decision 4, cross-session persistence via `news_events`) implemented. Layer 3 (hard SQLite-only reads in `NewsSentimentAgent`) not implemented as a literal requirement — its rationale depended on the now-unavailable WebSocket feed; the shared cache achieves the same practical outcome (≤1 REST hit per ticker per 5 min) without the rewrite risk. Revisit if the Finnhub plan is upgraded. |
-| ~~**32 (34E)**~~ | ~~`transformers`, `torch`~~ | ~~FinBERT loading from PR branch `refs/pr/29` — fragile.~~ — **Verified Session 34: already resolved.** `transformers` already at 5.13.0 (past the 4.47.0 floor); FinBERT already confirmed returning non-zero scores in Session 33. Still loads from the PR branch (fragile but functional) — left as-is. |
-| **33 (34F)** | `llm/client.py`, `news/layer2_premarket.py` | Ollama concurrency — new bug found during Session 34 live verification, not in original scope. Up to 10 tickers call `query_llm()` concurrently every cycle; Ollama serializes on one local model instance, causing Phase-1 timeouts. **Mitigated Session 34** with `threading.Semaphore(2)` in `llm/client.py` (same pattern as the Finnhub fix), but a genuine CPU throughput ceiling remains — timeouts still observed in the final verification run. Open for a future session: raise Phase-1 timeout, reduce per-cycle LLM calls, or switch to a faster backend. |
+| ~~**32 (34E)**~~ | ~~`news/finbert.py`, `scripts/run_paper.py`~~ | ~~FinBERT loading from PR branch `refs/pr/29` — fragile, and previously uncaught: `get_finbert_pipeline()` only caught `ImportError`, so if the PR branch is closed/squashed/force-pushed the resulting exception (revision resolution, network, format mismatch) was uncaught and would crash the startup pre-warm in `run_paper.py` before any trading started.~~ **Fixed. `get_finbert_pipeline()` now catches `Exception` broadly (not just `ImportError`), logs the full traceback for diagnostics, and returns `None` — `score_sentiment()` already degrades to neutral 0.0 whenever the pipeline is unavailable, so this can no longer crash the process. `run_paper.py`'s pre-warm log was also silently claiming "FinBERT ready" unconditionally regardless of success — now checks the actual return value and logs a warning instead when unavailable. Verified: simulated the exact failure mode (a non-`ImportError` exception from the pipeline load) and confirmed it degrades to `None`/neutral 0.0 instead of raising. The underlying PR-branch dependency itself is unchanged (still `ProsusAI/finbert`'s auto-discovered fallback, outside app control) — this fix addresses the crash risk, not the dependency's fragility.** |
+| **33 (34F)** | `llm/client.py`, `news/layer2_premarket.py` | Ollama concurrency — new bug found during Session 34 live verification, not in original scope. Up to 10 tickers call `query_llm()` concurrently every cycle; Ollama serializes on one local model instance, causing Phase-1 timeouts. **Mitigated Session 34** with `threading.Semaphore(2)` in `llm/client.py` (same pattern as the Finnhub fix), but a genuine CPU throughput ceiling remains — timeouts still observed in the final verification run. **Deferred Session 36** — no GPU available; will revisit if Claude API backend is enabled or hardware changes. |
+| ~~**34 (35A)**~~ | ~~`agents/news_sentiment.py`~~ | ~~News layer run frequency throttling — Layers 1 and 5 once per session, Layer 2 market-hours skip, Layer 4 once per hour, Layer 3 unchanged.~~ **Fixed Session 35.** Verified against actual file. All dict reads/writes under `_layer_timer_lock`. Circular import resolved via local import of `_is_market_open`. |
+| ~~**35 (36A)**~~ | ~~`.env`, `data/feeds/news_feed.py`~~ | ~~Benzinga key absent — wasted HTTP round trip every cycle.~~ **Fixed Session 36.** Key confirmed active via curl test. `BENZINGA_API_KEY` added to `.env`. One-line guard added to `_fetch_ticker_news()` to skip Benzinga call entirely when key absent. Benzinga now primary news source; Finnhub only fires as genuine fallback. |
+| ~~**36 (36B)**~~ | ~~`agents/orchestrator.py`, `data/cache/market_data_cache.py`~~ | ~~PriceFeedAgent top-down pre-fetch — add `warm_up(WATCHLIST, all_timeframes)` at start of `run_all()` before `ThreadPoolExecutor` launches.~~ **Fixed Session 37.** `warm_up()` called every `run_all()` cycle with mode-specific timeframes, before the executor launches. |
+| ~~**37 (36C)**~~ | ~~`news/news_ingest.py`, `scripts/run_paper.py`, `llm/client.py`, `agents/news_sentiment.py`~~ | ~~Pre-market batch redesign — move Layers 1 and 5 into `run_premarket_news_fetch()`, startup 8:15am, `_PREMARKET_CUTOFF` → 8:50am, five crash mitigations.~~ **Fixed Session 37.** All five mitigations implemented: 25s Ollama timeout cap, per-layer exception isolation, session flag population from batch, per-ticker SQLite checkpoint (`premarket_checkpoints`), market-open abort guard. `_PREMARKET_CUTOFF` moved to 8:50am. |
+| ~~**38 (36D)**~~ | ~~`news/layer4_weekly.py`, `news/layer5_monthly.py`~~ | ~~Layer 4 and 5 read from old `news` table via `get_recent_news()` — do not see `news_events` pre-market context written by the batch job.~~ **Fixed Session 43.** Both layers migrated to `get_recent_news_events()` with time-window parameters matching each layer's horizon (7-day for Layer 4, 30-day for Layer 5). |
+| ~~**39 (36E)**~~ | ~~`news/layer3_spike.py`, `news/layer4_weekly.py`~~ | ~~Layer 3 `fetch_candles()` call bypasses the pre-warmed cache — imported from `data.feeds.price_feed` directly.~~ **Fixed. Root cause corrected — was not actually the `_yf_lock` (which was already respected inside `price_feed._yf_fetch_candles()`, verified: it's the only other yfinance call site besides `fundamentals_feed.py`, both locked). The real bug: Layer 3 never read `market_data_cache.get_candles()`, so it made a fresh live Polygon/yfinance fetch for every ticker on every Phase 1 cycle regardless of cache freshness — the Session 37 `warm_up()` fix never got read here, contrary to what this item previously claimed ("mitigated by Problem 2... makes the lock irrelevant" — wrong, since Layer 3 bypassed the cache warm_up populates, not the lock). Fix: both `layer3_spike.py` and `layer4_weekly._build_technical_summary()` (same bug class, lower impact since already staggered/hourly) switched to `data.cache.market_data_cache.get_candles()`. Verified: mocked test confirmed exactly one live fetch across two calls to `_detect_market_event()` for the same ticker, second call served from cache.** |
+| ~~**40 (38A)**~~ | ~~`data/storage/db.py`, `data/storage/fundamentals_store.py` (new), `agents/fundamental.py`, `news/news_ingest.py`~~ | ~~FundamentalAgent pre-market cache — move fundamentals fetch off the live per-cycle path onto the pre-market batch.~~ **Fixed Session 38.** `fundamentals_cache` SQLite table added; pre-market batch fetches fundamentals sequentially per ticker before Layer 2; `FundamentalAgent` reads from SQLite (24h TTL) with live-fetch fallback on cold/stale cache. Verification step surfaced that the original "1,560 calls/day" root cause was overstated (an in-memory 6h cache already existed) — real fix targets the restart-loses-cache and periodic 6h `_yf_lock` pile-up gaps instead. |
+| ~~**41 (39A)**~~ | ~~`agents/news_sentiment.py`~~ | ~~Layer 4 startup burst — stagger initial timestamps instead of defaulting to `0.0`.~~ **Fixed Session 39.** `_layer4_stagger_offset()` gives each ticker a stable crc32-derived due-time within the hour. |
+| ~~**42 (39B)**~~ | ~~`scripts/run_paper.py`, `agents/orchestrator.py`~~ | ~~SL/TP monitoring starvation — decouple `run_maintenance()`/`check_sl_tp_exits()` from `run_all()`'s blocking duration.~~ **Fixed Session 39.** `_maintenance_loop` runs on its own daemon thread; `Orchestrator._maintenance_lock` added to prevent the double-close/duplicate-exit race this introduced. |
+| ~~**43 (39C)**~~ | ~~`core/config.py`, `agents/orchestrator.py`~~ | ~~Raise Phase 1 (30s) and outer (45s) run_ticker timeouts now that item 42 (39B) removed the SL/TP-starvation risk of doing so.~~ **Fixed Session 39.** `PHASE1_AGENT_TIMEOUT_SECONDS=100`, `TICKER_TIMEOUT_SECONDS=150`. |
+| **44 (39D)** | `core/config.py`, `llm/client.py`, `agents/critic.py`, `news/layer1_quarterly.py`, `news/layer2_premarket.py`, `news/layer3_spike.py`, `news/layer4_weekly.py`, `news/layer5_monthly.py`, `news/news_ingest.py` | Orphaned semaphore-holding threads on `future.result()` timeout. **Mitigated Session 39** via a shared timeout constant on every `query_llm()` call site — bounds the orphaned hold instead of eliminating it. **20s proved insufficient on real hardware** (a trivial prompt was observed taking ~19s end-to-end) — raised to **90s**. **Unified Session 39 addendum 4:** the constant (renamed `LIVE_LLM_TIMEOUT_SECONDS` → `LLM_TIMEOUT_SECONDS`) now also replaces `news_ingest.py`'s separately-hardcoded `_PREMARKET_LLM_TIMEOUT=25` (which was never re-examined against the same 19s finding) and the independent `timeout: int = 60`/`llm_timeout: int = 60` defaults that were scattered across `llm/client.py` and all three `run_*_analysis()` layer functions plus `news_ingest.py`'s `_classify_horizon()`/`ingest_news_item()` — one source of truth instead of eight places needing to agree. Leaves only ~10s margin under `PHASE1_AGENT_TIMEOUT_SECONDS` (100s) for a single call; a Phase 1 agent needing more than one Ollama round-trip per cycle can still exceed the Phase 1 budget regardless of this value. **Still open:** a true cancellable-request pattern for `_query_ollama()` is undesigned; the pre-market batch's worst-case per-ticker timing estimate (previously "~80s/ticker" against the old 25s cap) has not been re-measured against the new 90s cap. |
+| **45 (39E)** | `agents/news_sentiment.py` | Layer 2 has no per-session throttle dict (unlike Layers 1/4/5) — relies solely on `if not _is_market_open()`. Verified currently non-reachable (`orchestrator.py`'s own market-hours guard prevents it from firing while closed), but depends on a guarantee made two call-layers up. **Identified Session 39. Deferred — hardening only, not urgent.** |
+| ~~**46 (39F)**~~ | ~~`agents/orchestrator.py`~~ | ~~Reversal exit vs SL/TP maintenance thread race — `run_ticker()`'s reversal-exit `has_pending_exit()` check (then `_flat_position()`) was not under `_maintenance_lock`, while `check_sl_tp_exits()` on the maintenance thread was. Pre-existing in the single-threaded design technically, but item 68 (39B)'s maintenance thread made it a real concurrent scenario, not a theoretical one — both could pass `has_pending_exit()` for the same trade before either wrote the exit, submitting two exit orders for one position.~~ **Fixed. Wrapped the reversal path's `has_pending_exit()` + `_flat_position()` check-then-act in `with self._maintenance_lock:`, same granularity already used by `check_sl_tp_exits()`/`_reconcile_closed_trades()`. Verified no re-entrant deadlock (`_flat_position()`'s call chain — `get_candles()`, `execution.run()` — never re-acquires the lock). Verified the race itself with a barrier-synchronized two-thread test forcing both `has_pending_exit()` reads to complete before either write: reproduced 2 duplicate submissions unlocked, confirmed 1 with the lock held.** |
+| ~~**47 (40A)**~~ | ~~`risk/circuit_breakers.py`~~ | ~~`t.get("filled_at", "")[:10]` crashes on an explicit `None` value (key present) — `check_circuit_breakers()` crash.~~ **Fixed Session 40.** `(t.get("filled_at") or "")[:10]`. Verified with the exact crash condition. |
+| ~~**48 (40B)**~~ | ~~`risk/circuit_breakers.py`~~ | ~~`_get_portfolio_value()` constructs a new `AlpacaBroker()` every call.~~ **Fixed Session 40.** Lazy-initialized module-level singleton, same pattern as `execution/order_router.py`. Verified: 1 construction across 3 calls. |
+| ~~**49 (40C)**~~ | ~~`agents/critic.py`~~ | ~~Bug A: `query_llm()` returning `None` crashes `_parse_response(None).strip()`.~~ **Fixed Session 40.** Explicit `if response is None:` check with the same fail-open default. |
+| ~~**50 (40D)**~~ | ~~`agents/critic.py`~~ | ~~Bug B: fallback keyword scan's `"approve" in lower` matches the literal JSON key `"approved"` as a substring on malformed JSON, always returning `True` regardless of actual value — root cause of "Critic APPROVED" logs alongside `approved: false`.~~ **Fixed Session 40.** `"approved"\s*:\s*(true|false)` regex recovery tried first; JSON key stripped from text before the last-resort keyword scan. Verified with 5 cases including the exact bug. |
+| ~~**51 (40E)**~~ | ~~`news/layer3_spike.py`~~ | ~~`query_llm()` returning `None` crashes on `llm_resp.strip()`.~~ **Fixed Session 40.** `if llm_resp is None:` → warning + `llm_resp = ""`, falls through to existing FinBERT-only path. |
+| ~~**52 (40F)**~~ | ~~`news/layer4_weekly.py`~~ | ~~`query_llm()` returning `None` crashes on `llm_response.lower()`.~~ **Fixed Session 40.** `if llm_response is None:` → warning + `return []`, same pattern as Layer 5. |
+| ~~**53 (40G)**~~ | ~~`execution/broker/alpaca.py`~~ | ~~Alpaca rejected a limit order for a sub-penny price (`322.17999267578125`) — unrounded float passed to `limit_price`.~~ **Fixed Session 40.** `round(plan.entry_price, 2)` on both `submit_limit_order()`'s `limit_price` and `submit_stop_order()`'s `stop_price` (latter fixed after user confirmation — identical risk). |
+| ~~**54 (41A)**~~ | ~~`agents/orchestrator.py`~~ | ~~Phase 1 pool's `with ThreadPoolExecutor(...) as p1_pool:` calls `shutdown(wait=True)` on exit, silently defeating `PHASE1_AGENT_TIMEOUT_SECONDS` — confirmed 35s-3+min gaps in production logs between a "timed out" message and the pipeline continuing.~~ **Fixed Session 41.** Dropped the `with` block; `p1_pool.shutdown(wait=False)` after the loop. Verified: pool releases in ~1s instead of blocking ~5s for a straggler. |
+| ~~**55 (41B)**~~ | ~~`agents/orchestrator.py`~~ | ~~`run_all()`'s outer pool: same `with`-block shutdown issue, plus `as_completed()` only yields already-finished futures, making `TICKER_TIMEOUT_SECONDS` and its timeout-handling branch unreachable dead code.~~ **Fixed Session 41.** Replaced with a `wait(timeout=1, return_when=FIRST_COMPLETED)` polling loop and per-future deadlines via `time.monotonic()` (imported as `from time import monotonic` to avoid colliding with the file's existing `datetime.time` import). Verified: simulated FAST/MED/SLOW(10s) tasks with a 2s deadline correctly abandoned SLOW instead of blocking 10s. |
+| ~~**56 (42A)**~~ | ~~`agents/orchestrator.py`~~ | ~~Add `premarket_only: bool = False` to `run_all()` and `run_ticker()`. When `True`: bypass `_is_market_open()` guard; skip `self.execution.run()` in `run_ticker()`. All other pipeline stages unchanged.~~ **Confirmed implemented Session 44.** `run_all(premarket_only=False)` bypasses the market-hours guard when `True` and threads the flag through to `run_ticker()`, which skips `self.execution.run()` and the reversal-exit path when set. |
+| ~~**57 (42B)**~~ | ~~`scripts/run_premarket.py` (new)~~ | ~~One-shot script: Orchestrator for both INTRADAY and LONG_TERM modes, `run_all(premarket_only=True)` for each, writes signals/trade plans to SQLite, exits cleanly.~~ **Confirmed implemented Session 44.** File exists and matches the locked design — pre-warms FinBERT, warms the candle cache across both modes' timeframes, runs the pre-market news fetch, then runs both orchestrators with `premarket_only=True` and exits (no loop, no maintenance thread). |
+| ~~**58 (42C)**~~ | ~~`scripts/run_live.py` (new)~~ | ~~Continuous-loop script replacing `run_paper.py`'s live-market behavior. Full 11-agent pipeline including ExecutionAgent, reading pre-market context from SQLite. Maintenance thread carries over.~~ **Confirmed implemented Session 44.** File exists and matches the locked design — dual-mode (`INTRADAY`/`LONG_TERM`) orchestrators, `_maintenance_loop` daemon thread for SL/TP + reconciliation decoupled from the two `run_all()` cycles, `PIPELINE_CYCLE_SECS`/`LONGTERM_LOOP_INTERVAL_SECONDS`/`INTRADAY_CYCLE_SECS` all present in `core/config.py`. |
+| **59 (42D)** | `scripts/run_paper.py` | `AlpacaBroker()` re-initialized once per 60s cycle visible in after-hours logs — source is the main loop itself, confirmed separate from the `circuit_breakers.py` singleton fixed Session 40. Cosmetic (no crash risk). Deferred — will be superseded when `run_live.py` replaces `run_paper.py`. |
+| ~~**61 (43A)**~~ | ~~`news/news_ingest.py`~~ | ~~`classify_horizon=True` in `run_premarket_news_fetch()` — one Ollama call per article (~541 per run) writing a `horizon` label to `news_events` that no layer ever reads. Root cause of the 79-minute ingest time.~~ **Fixed Session 43.** Changed to `classify_horizon=False`. Ingest time reduced to ~10-12 minutes. |
+| ~~**62 (43B)**~~ | ~~`news/news_ingest.py`~~ | ~~`ingest_news_item()` called `score_sentiment()` unconditionally, re-scoring articles with FinBERT even when Layer 2 had already set `item.sentiment_score` on the same objects in the same batch — same headline through the same model twice.~~ **Fixed Session 43.** Added `item.sentiment_score is not None` reuse check before calling `score_sentiment()`. |
+| ~~**63 (43C)**~~ | ~~`agents/orchestrator.py`~~ | ~~Critic ran during `premarket_only=True` runs — evaluating trade plans that could never be executed since `self.execution.run()` is already skipped. Observed 13 Critic calls after "Analysis done" log line, each 45-60s of Ollama inference, all producing rejected verdicts that were immediately discarded.~~ **Corrected Session 44 — the fix recorded here previously had not actually landed in the code** (`run_ticker()` had no `self.premarket_only` attribute anywhere and called `self.critic.run()` unconditionally; only `self.execution.run()` was gated). Fixed for real this session: added an early return right after `trade_plan` is built in Phase 4 (`agents/orchestrator.py`, ~line 439) when the `premarket_only` parameter is `True`, returning `results` (which already contains `trade_plan`) before the `self.critic.run()` call. Also removed the now-dead `if premarket_only:` branch guarding `self.execution.run()` further down, since that branch can no longer be reached with `premarket_only=True`. Verified via `ast.parse()` and a full read of the surrounding control flow; not exercised against live Ollama/broker calls in this session. |
 
 ---
 

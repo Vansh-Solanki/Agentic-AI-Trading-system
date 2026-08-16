@@ -1,9 +1,10 @@
 import logging
+from core.config import LLM_TIMEOUT_SECONDS
 from core.models import Signal
 from core.constants import SignalType, SignalSource, Timeframe
 from data.storage.news_store import get_recent_news
 from data.storage.stock_memory_store import get_memory
-from data.feeds.price_feed import fetch_candles
+from data.cache.market_data_cache import get_candles
 from llm.client import query_llm
 from llm.prompts.weekly_bias import build_weekly_bias_prompt
 
@@ -21,7 +22,16 @@ def run_weekly_analysis(ticker: str) -> list[Signal]:
     quarterly_thesis   = get_memory(ticker, "long_term", "quarterly_thesis")
 
     prompt       = build_weekly_bias_prompt(ticker, news_summary, technical_summary, quarterly_thesis)
-    llm_response = query_llm(prompt, max_tokens=300)
+    # Session 39, item 67 mitigation: bounds how long this thread can hold
+    # llm/client.py's _ollama_semaphore slot past its caller's own timeout —
+    # future.result() timing out doesn't kill this thread.
+    llm_response = query_llm(prompt, max_tokens=300, timeout=LLM_TIMEOUT_SECONDS)
+    if llm_response is None:
+        # Layer 4 has no independent score to fall back on (unlike Layer 2's
+        # FinBERT avg or Layer 3's FinBERT score) — skip this cycle rather
+        # than manufacture a signal from nothing, same pattern as Layer 5.
+        logger.warning("Layer 4: %s — LLM call failed, skipping weekly thesis this cycle.", ticker)
+        return []
 
     lower = llm_response.lower()
     if any(w in lower for w in ("accumulate", "bullish", "uptrend", "buy")):
@@ -49,8 +59,12 @@ def _build_news_summary(rows: list[dict]) -> str:
 
 
 def _build_technical_summary(ticker: str) -> str:
+    # Session 39 fix: read through the pre-warmed cache instead of calling
+    # price_feed.fetch_candles() directly (same bug class as Layer 3's spike
+    # gate) — lower-impact here since Layer 4 is already staggered/hourly,
+    # but the same one-line fix removes a redundant live fetch either way.
     try:
-        df = fetch_candles(ticker, Timeframe.D1)
+        df = get_candles(ticker, Timeframe.D1)
         if df.empty or len(df) < 20:
             return "Insufficient data."
         close = df["Close"]

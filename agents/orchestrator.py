@@ -1,9 +1,14 @@
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+from concurrent.futures import ThreadPoolExecutor, wait as futures_wait, FIRST_COMPLETED
 from datetime import datetime, time, timezone
+from time import monotonic
 from zoneinfo import ZoneInfo
-from core.config import TradingMode, WATCHLIST, ALPACA_API_KEY, ALPACA_SECRET_KEY, PAPER_TRADING
-from core.constants import RegimeType, SignalType, OrderSide, OrderType, Timeframe
+from core.config import (
+    TradingMode, WATCHLIST, ALPACA_API_KEY, ALPACA_SECRET_KEY, PAPER_TRADING,
+    PHASE1_AGENT_TIMEOUT_SECONDS, TICKER_TIMEOUT_SECONDS,
+)
+from core.constants import RegimeType, SignalType, OrderSide, OrderType, Timeframe, INTRADAY_TIMEFRAMES, LONGTERM_TIMEFRAMES
 from core.models import AgentOutput, Signal, TradePlan
 from agents.technical import TechnicalAgent
 from agents.news_sentiment import NewsSentimentAgent
@@ -21,7 +26,7 @@ from data.storage.decision_store import (
     has_pending_exit, get_open_filled_entry_trade,
     save_critic_verdict, save_hold_decision,
 )
-from data.cache.market_data_cache import get_candles
+from data.cache.market_data_cache import get_candles, warm_up
 from data.feeds.price_feed import fetch_snapshot
 from llm.prompts.spike_analysis import build_structured_summary
 from risk.circuit_breakers import check_circuit_breakers
@@ -90,6 +95,17 @@ class Orchestrator:
         self.mode            = mode
         self.portfolio_value = portfolio_value
 
+        # Session 39, item 68: once SL/TP monitoring runs on its own thread
+        # (see scripts/run_paper.py's maintenance loop), this same Orchestrator
+        # instance's _reconcile_closed_trades() and check_sl_tp_exits() can be
+        # entered concurrently from that thread and from run_all() on the main
+        # thread. Without this lock, two overlapping calls could both see the
+        # same trade as still-open and both close it / both submit an exit
+        # order. Held only around each individual method body, not across the
+        # whole pipeline, so it doesn't reintroduce the starvation problem
+        # the maintenance thread was split out to fix.
+        self._maintenance_lock = threading.Lock()
+
         self.technical  = TechnicalAgent(mode)
         self.news       = NewsSentimentAgent(mode)
         self.fundamental = FundamentalAgent(mode)
@@ -110,47 +126,48 @@ class Orchestrator:
         remove the symbol from Alpaca's positions, so symbol presence alone cannot
         distinguish which lane closed.
         """
-        filled = get_filled_trades(strategy_mode=self.mode.value)
-        if not filled:
-            return {}
+        with self._maintenance_lock:
+            filled = get_filled_trades(strategy_mode=self.mode.value)
+            if not filled:
+                return {}
 
-        try:
-            broker = AlpacaBroker()
-        except Exception as exc:
-            logger.warning("Could not initialise broker for reconciliation: %s", exc)
-            return {}
-
-        closed_outcomes: dict[tuple[str, str], dict] = {}
-        now = datetime.now(timezone.utc)
-
-        for trade in filled:
-            ticker = trade["ticker"]
-            trade_id = trade["id"]
-            strategy_mode = trade["strategy_mode"]
-
-            # The exit order for this specific lane carries this client_order_id
-            exit_coid = f"exit-{trade_id}-{strategy_mode}"
-            exit_price = broker.get_fill_by_client_order_id(exit_coid)
-
-            if exit_price is None:
-                continue  # no filled exit order yet — lane still open
-
-            pnl = self._estimate_pnl(trade, exit_price)
             try:
-                close_trade(trade_id, pnl, now)
-            except Exception:
-                logger.exception("[%s][%s] DB write failed for close_trade(id=%d) — will retry next cycle",
-                                 ticker, strategy_mode, trade_id)
-                continue
-            closed_outcomes[(ticker, strategy_mode)] = {
-                "pnl": pnl,
-                "closed_at": now.isoformat(),
-                "reasoning": trade.get("reasoning", ""),
-            }
-            logger.info("[%s][%s] Position closed via exit coid — pnl=%.2f",
-                        ticker, strategy_mode, pnl or 0.0)
+                broker = AlpacaBroker()
+            except Exception as exc:
+                logger.warning("Could not initialise broker for reconciliation: %s", exc)
+                return {}
 
-        return closed_outcomes
+            closed_outcomes: dict[tuple[str, str], dict] = {}
+            now = datetime.now(timezone.utc)
+
+            for trade in filled:
+                ticker = trade["ticker"]
+                trade_id = trade["id"]
+                strategy_mode = trade["strategy_mode"]
+
+                # The exit order for this specific lane carries this client_order_id
+                exit_coid = f"exit-{trade_id}-{strategy_mode}"
+                exit_price = broker.get_fill_by_client_order_id(exit_coid)
+
+                if exit_price is None:
+                    continue  # no filled exit order yet — lane still open
+
+                pnl = self._estimate_pnl(trade, exit_price)
+                try:
+                    close_trade(trade_id, pnl, now)
+                except Exception:
+                    logger.exception("[%s][%s] DB write failed for close_trade(id=%d) — will retry next cycle",
+                                     ticker, strategy_mode, trade_id)
+                    continue
+                closed_outcomes[(ticker, strategy_mode)] = {
+                    "pnl": pnl,
+                    "closed_at": now.isoformat(),
+                    "reasoning": trade.get("reasoning", ""),
+                }
+                logger.info("[%s][%s] Position closed via exit coid — pnl=%.2f",
+                            ticker, strategy_mode, pnl or 0.0)
+
+            return closed_outcomes
 
     def _estimate_pnl(self, trade: dict, exit_price: float) -> float | None:
         """Compute realized PnL from the confirmed exit fill price."""
@@ -199,52 +216,57 @@ class Orchestrator:
         """Check all open positions for SL/TP breaches and submit market exits if triggered.
 
         Market hours guard at top prevents submitting orders when the exchange is closed.
-        Double-submission is blocked by has_pending_exit() before every exit attempt.
+        Double-submission is blocked by has_pending_exit() before every exit attempt — but
+        that check-then-act is itself only race-free within one thread at a time, so the
+        whole method is also serialized per-instance via _maintenance_lock (Session 39,
+        item 68: this can now be entered from the maintenance thread and from run_all()
+        concurrently on the same Orchestrator).
         """
         if not _is_market_open():
             return
 
-        filled = get_filled_trades(self.mode.value)
+        with self._maintenance_lock:
+            filled = get_filled_trades(self.mode.value)
 
-        for trade in filled:
-            ticker     = trade["ticker"]
-            trade_id   = trade["id"]
-            stop_loss  = trade.get("stop_loss")
-            take_profit = trade.get("take_profit")
-            qty        = trade.get("quantity", 0)
+            for trade in filled:
+                ticker     = trade["ticker"]
+                trade_id   = trade["id"]
+                stop_loss  = trade.get("stop_loss")
+                take_profit = trade.get("take_profit")
+                qty        = trade.get("quantity", 0)
 
-            if stop_loss is None or take_profit is None or not qty:
-                continue
+                if stop_loss is None or take_profit is None or not qty:
+                    continue
 
-            if has_pending_exit(trade_id, self.mode.value):
-                continue
+                if has_pending_exit(trade_id, self.mode.value):
+                    continue
 
-            try:
-                current_price = fetch_snapshot(ticker).price
-            except Exception as exc:
-                logger.warning("[%s] Could not fetch live price for SL/TP check: %s", ticker, exc)
-                continue
+                try:
+                    current_price = fetch_snapshot(ticker).price
+                except Exception as exc:
+                    logger.warning("[%s] Could not fetch live price for SL/TP check: %s", ticker, exc)
+                    continue
 
-            trade_side = trade.get("side", "buy")
-            if trade_side == "sell":
-                sl_breach = current_price >= stop_loss
-                tp_breach = current_price <= take_profit
-            else:
-                sl_breach = current_price <= stop_loss
-                tp_breach = current_price >= take_profit
+                trade_side = trade.get("side", "buy")
+                if trade_side == "sell":
+                    sl_breach = current_price >= stop_loss
+                    tp_breach = current_price <= take_profit
+                else:
+                    sl_breach = current_price <= stop_loss
+                    tp_breach = current_price >= take_profit
 
-            if sl_breach:
-                breach = "SL"
-            elif tp_breach:
-                breach = "TP"
-            else:
-                continue
+                if sl_breach:
+                    breach = "SL"
+                elif tp_breach:
+                    breach = "TP"
+                else:
+                    continue
 
-            logger.info("[%s][%s] Price %.2f breached %s (SL=%.2f TP=%.2f) — submitting exit",
-                        ticker, self.mode.value, current_price, breach, stop_loss, take_profit)
-            self._flat_position(trade, reason=f"Price breached {breach}")
+                logger.info("[%s][%s] Price %.2f breached %s (SL=%.2f TP=%.2f) — submitting exit",
+                            ticker, self.mode.value, current_price, breach, stop_loss, take_profit)
+                self._flat_position(trade, reason=f"Price breached {breach}")
 
-    def run_ticker(self, ticker: str, closed_trade: dict | None = None) -> dict[str, AgentOutput]:
+    def run_ticker(self, ticker: str, closed_trade: dict | None = None, premarket_only: bool = False) -> dict[str, AgentOutput]:
         logger.info("=== Running pipeline for %s [%s] ===", ticker, self.mode.value)
         results: dict[str, AgentOutput] = {}
 
@@ -256,17 +278,28 @@ class Orchestrator:
             "memory":      self.memory,
             "fundamental": self.fundamental,
         }
-        with ThreadPoolExecutor(max_workers=5) as p1_pool:
-            p1_futures = {name: p1_pool.submit(agent.run, ticker) for name, agent in _phase1.items()}
-            for name, fut in p1_futures.items():
-                try:
-                    results[name] = fut.result(timeout=30)
-                except TimeoutError:
-                    logger.error("[%s] Phase 1 agent '%s' timed out — using empty output", ticker, name)
-                    results[name] = AgentOutput(agent_name=name, ticker=ticker, signals=[], summary="Timed out.")
-                except Exception:
-                    logger.exception("[%s] Phase 1 agent '%s' failed — using empty output", ticker, name)
-                    results[name] = AgentOutput(agent_name=name, ticker=ticker, signals=[], summary="Failed.")
+        # Not a `with` block on purpose: exiting `with ThreadPoolExecutor(...)`
+        # calls shutdown(wait=True), which blocks until every submitted thread
+        # finishes — including ones already given up on below via
+        # fut.result(timeout=...). That silently defeated
+        # PHASE1_AGENT_TIMEOUT_SECONDS entirely (confirmed in production logs:
+        # 35s to 3+ minutes between a logged "timed out" message and the
+        # pipeline actually continuing). shutdown(wait=False) releases the
+        # pool without waiting on stragglers — they keep running in the
+        # background (Python can't cancel a running thread), but nothing
+        # reads their result again.
+        p1_pool = ThreadPoolExecutor(max_workers=5)
+        p1_futures = {name: p1_pool.submit(agent.run, ticker) for name, agent in _phase1.items()}
+        for name, fut in p1_futures.items():
+            try:
+                results[name] = fut.result(timeout=PHASE1_AGENT_TIMEOUT_SECONDS)
+            except TimeoutError:
+                logger.error("[%s] Phase 1 agent '%s' timed out — using empty output", ticker, name)
+                results[name] = AgentOutput(agent_name=name, ticker=ticker, signals=[], summary="Timed out.")
+            except Exception:
+                logger.exception("[%s] Phase 1 agent '%s' failed — using empty output", ticker, name)
+                results[name] = AgentOutput(agent_name=name, ticker=ticker, signals=[], summary="Failed.")
+        p1_pool.shutdown(wait=False)
 
         # Phase 2: risk gate
         results["risk"] = self.risk.run(ticker)
@@ -319,11 +352,21 @@ class Orchestrator:
             signal_is_sell = decision_signal.signal_type in (SignalType.SELL, SignalType.STRONG_SELL)
             signal_is_buy  = decision_signal.signal_type in (SignalType.BUY,  SignalType.STRONG_BUY)
             reversal = (open_side == "buy" and signal_is_sell) or (open_side == "sell" and signal_is_buy)
-            if reversal:
+            if reversal and not premarket_only:
                 logger.info("[%s][%s] Signal reversal detected — exiting %s position",
                             ticker, self.mode.value, open_side)
-                if not has_pending_exit(open_entry["id"], self.mode.value):
-                    self._flat_position(open_entry, reason="Signal reversal")
+                # Session 39 fix: this check-then-act (has_pending_exit() then
+                # _flat_position()) races check_sl_tp_exits() on the maintenance
+                # thread — both can pass has_pending_exit() for the same trade
+                # before either writes the exit, submitting two exit orders for
+                # one position. _maintenance_lock is per-Orchestrator-instance
+                # (already used by check_sl_tp_exits()/_reconcile_closed_trades()
+                # at that same granularity), so serializing this narrow section
+                # against it closes the race without holding the lock for the
+                # rest of run_ticker().
+                with self._maintenance_lock:
+                    if not has_pending_exit(open_entry["id"], self.mode.value):
+                        self._flat_position(open_entry, reason="Signal reversal")
                 return results
 
         # HOLD logging: open position + non-reversal signal → record hold, skip Phase 4
@@ -392,6 +435,14 @@ class Orchestrator:
             regime=regime_label,
         )
         plan = results["trade_plan"].raw_data.get("plan")
+
+        # premarket_only runs never reach execution, so critiquing a plan that
+        # can't be traded just burns an Ollama round-trip for a verdict nobody
+        # reads. Trade plan itself is still produced and returned —
+        # run_premarket.py writes it to SQLite.
+        if premarket_only:
+            logger.info("[%s] premarket_only — skipping critic.", ticker)
+            return results
 
         structured_summary = build_structured_summary(regime_label, all_signals)
         results["critic"] = self.critic.run(ticker, plan=plan, supporting_summary=structured_summary)
@@ -468,8 +519,8 @@ class Orchestrator:
             return
         self._refresh_portfolio_and_reconcile()
 
-    def run_all(self) -> dict[str, dict[str, AgentOutput]]:
-        if not _is_market_open():
+    def run_all(self, premarket_only: bool = False) -> dict[str, dict[str, AgentOutput]]:
+        if not premarket_only and not _is_market_open():
             logger.info("Market closed — skipping cycle.")
             return {}
 
@@ -480,18 +531,51 @@ class Orchestrator:
 
         closed_outcomes = self._refresh_portfolio_and_reconcile()
 
+        # Session 36, Problem 2: pre-fetch all candles sequentially (one lock
+        # holder at a time) before the parallel phase launches. Without this,
+        # up to 50 Phase 1 agent threads (10 tickers x 5 agents) fight over
+        # _yf_lock simultaneously at timeframe collision points (e.g. 1:30pm
+        # when M5+M15+H1+H4 all expire together), and the last thread in the
+        # queue can burn most of its 30s Phase 1 budget just waiting for the
+        # lock. Warming the cache here means every Phase 1 agent call below
+        # hits a cache hit instead of a live yfinance call.
+        timeframes = INTRADAY_TIMEFRAMES if self.mode == TradingMode.INTRADAY else LONGTERM_TIMEFRAMES
+        warm_up(WATCHLIST, timeframes)
+
+        # Not a `with` block, and not as_completed() — same shutdown(wait=True)
+        # problem as Phase 1's pool above, plus a second bug: as_completed()
+        # only ever yields a future AFTER it has already finished, so
+        # future.result(timeout=TICKER_TIMEOUT_SECONDS) was called on an
+        # already-resolved future and could never actually raise
+        # TimeoutError. TICKER_TIMEOUT_SECONDS and the "skipping ticker" log
+        # below were both unreachable dead code — run_all() always waited for
+        # whichever ticker was slowest that cycle, no matter how long. This
+        # polls with a real per-ticker deadline via wait(timeout=1, ...)
+        # instead, so an expired future is abandoned (not waited on) rather
+        # than silently continuing to block on it.
         all_results: dict[str, dict[str, AgentOutput]] = {}
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = {
-                executor.submit(self.run_ticker, ticker, closed_outcomes.get((ticker, self.mode.value))): ticker
-                for ticker in WATCHLIST
-            }
-            for future in as_completed(futures):
-                ticker = futures[future]
+        executor = ThreadPoolExecutor(max_workers=10)
+        futures = {
+            executor.submit(
+                self.run_ticker, ticker, closed_outcomes.get((ticker, self.mode.value)), premarket_only
+            ): ticker
+            for ticker in WATCHLIST
+        }
+        deadlines = {fut: monotonic() + TICKER_TIMEOUT_SECONDS for fut in futures}
+        pending = set(futures)
+        while pending:
+            done, pending = futures_wait(pending, timeout=1, return_when=FIRST_COMPLETED)
+            for fut in done:
+                ticker = futures[fut]
                 try:
-                    all_results[ticker] = future.result(timeout=45)
-                except TimeoutError:
-                    logger.error("[%s] run_ticker timed out after 45s — skipping ticker.", ticker)
+                    all_results[ticker] = fut.result()
                 except Exception:
                     logger.exception("[%s] Unhandled error in run_ticker — skipping ticker.", ticker)
+            now = monotonic()
+            expired = {fut for fut in pending if now >= deadlines[fut]}
+            for fut in expired:
+                ticker = futures[fut]
+                logger.error("[%s] run_ticker timed out after %ds — skipping ticker.", ticker, TICKER_TIMEOUT_SECONDS)
+                pending.discard(fut)
+        executor.shutdown(wait=False)
         return all_results
