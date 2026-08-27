@@ -6,10 +6,13 @@ Earnings, guidance, and analyst rating headlines from the past 90 days:
 
 FinBERT average sentiment score: {finbert_avg:.3f} (range -1 bearish to +1 bullish)
 
-Write a 3-4 sentence quarterly thesis covering:
-1. Earnings trend and guidance trajectory (beat/miss/in-line, raised/lowered/maintained)
-2. Analyst sentiment shift (upgrades, downgrades, PT changes)
-3. Institutional tone: accumulation, distribution, or neutral
-4. Net quarterly stance: bullish / bearish / neutral with one-line rationale
+Respond with ONLY valid JSON — no prose, no markdown, no code fences. Schema:
+{{
+  "stance": "bullish" | "bearish" | "neutral",
+  "earnings_trend": "one sentence — beat/miss/in-line, raised/lowered/maintained guidance",
+  "analyst_sentiment": "one sentence — upgrades, downgrades, PT changes",
+  "institutional_tone": "accumulation" | "distribution" | "neutral",
+  "reasoning": "one sentence — net quarterly rationale"
+}}
 
-Be specific. Do not hedge every statement."""
+Be specific. Do not hedge every field."""

@@ -41,6 +41,18 @@ def query_llm(prompt: str, max_tokens: int = 512, timeout: int = LLM_TIMEOUT_SEC
     return _query_ollama(prompt, max_tokens, timeout)
 
 
+def warm_up_llm(timeout: int = LLM_TIMEOUT_SECONDS) -> bool:
+    """
+    Session 47 item 13: fires one trivial, throwaway prompt so the model's
+    cold-load penalty (benchmarked at ~9.2s for the first call vs ~2.6s once
+    warm) lands once here at process startup, instead of unpredictably on
+    whichever ticker/agent happens to be first through the pipeline that run.
+    Returns whether the warm-up call succeeded — a failure here is not fatal,
+    it just means the next real call pays the cold-load cost instead.
+    """
+    return query_llm("Reply with the single word: ready", max_tokens=5, timeout=timeout) is not None
+
+
 def _query_ollama(prompt: str, max_tokens: int, timeout: int = LLM_TIMEOUT_SECONDS) -> Optional[str]:
     url = f"{OLLAMA_BASE_URL}/api/generate"
     payload = {

@@ -5,9 +5,11 @@ provide a brief directional bias for today's trading session.
 News headlines:
 {news_text}
 
-Respond in 2-3 sentences covering:
-1. The overall sentiment (bullish / bearish / neutral)
-2. The key catalyst driving the bias
-3. Key risk to the thesis
+Respond with ONLY valid JSON — no prose, no markdown, no code fences. Schema:
+{{
+  "stance": "bullish" | "bearish" | "neutral",
+  "catalyst": "one sentence — the key driver of the bias",
+  "risk": "one sentence — the key risk to the thesis"
+}}
 
 Be concise and direct. Do not repeat the headlines."""

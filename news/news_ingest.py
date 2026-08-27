@@ -4,7 +4,6 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from core.config import LLM_TIMEOUT_SECONDS
 from core.models import NewsItem
-from data.feeds.news_feed import fetch_premarket_news
 from data.storage.news_store import (
     save_news_event, is_premarket_checkpoint_complete, save_premarket_checkpoint,
 )
@@ -68,7 +67,7 @@ def ingest_news_item(item: NewsItem, classify_horizon: bool = False, llm_timeout
     accounts for it.
     Returns the FinBERT sentiment score.
     """
-    score = score_sentiment(item.headline + " " + item.summary)
+    score = item.sentiment_score if item.sentiment_score is not None else score_sentiment(item.headline + " " + item.summary)
     horizon = _classify_horizon(item.headline, timeout=llm_timeout) if classify_horizon else None
     save_news_event(item, sentiment_score=score, sentiment_label=sentiment_label(score), horizon=horizon)
     return score
@@ -136,21 +135,25 @@ def run_premarket_news_fetch(tickers: list[str]) -> None:
         except Exception:
             logger.exception("Pre-market news: %s — fundamentals fetch failed", ticker)
 
-        # Layer 2 — pre-market deep analysis (FinBERT + LLM daily bias)
+        # Layer 2 — pre-market deep analysis (FinBERT + LLM daily bias).
+        # Session 45 addendum: this used to do its own fetch_premarket_news()
+        # call here, then call run_premarket_analysis() right below, which
+        # did a second, independent fetch_premarket_news() + FinBERT pass
+        # over what is very likely the same articles — on separate NewsItem
+        # objects that never shared state, so the "skip re-scoring" reuse
+        # check added elsewhere never had a chance to fire for these. Fixed
+        # by having run_premarket_analysis() do the one fetch + one FinBERT
+        # pass and hand the already-scored objects back via items_out;
+        # ingest_news_item() is no longer called here for these items since
+        # run_premarket_analysis() already persists each one to news_events
+        # with its FinBERT score (classify_horizon is always False on this
+        # path now, so there is no horizon value ingest_news_item() would
+        # have added on top).
+        items: list[NewsItem] = []
         try:
-            items = fetch_premarket_news([ticker])
+            run_premarket_analysis(ticker, llm_timeout=LLM_TIMEOUT_SECONDS, items_out=items)
         except Exception:
-            logger.exception("Pre-market news: %s — Layer 2 fetch failed", ticker)
-            items = []
-        try:
-            run_premarket_analysis(ticker, llm_timeout=LLM_TIMEOUT_SECONDS)
-        except Exception:
-            logger.exception("Pre-market news: %s — Layer 2 analysis failed", ticker)
-        for item in items:
-            try:
-                ingest_news_item(item, classify_horizon=True, llm_timeout=LLM_TIMEOUT_SECONDS)
-            except Exception:
-                logger.exception("Pre-market news: %s — failed ingesting an article", ticker)
+            logger.exception("Pre-market news: %s — Layer 2 fetch/analysis failed", ticker)
         total_articles += len(items)
 
         # Layer 1 — quarterly earnings/analyst thesis

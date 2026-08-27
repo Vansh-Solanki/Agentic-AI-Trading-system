@@ -50,4 +50,9 @@ def get_fundamentals_cache(ticker: str, max_age_hours: int = 24) -> FundamentalD
         free_cash_flow=row["free_cash_flow"],
         market_cap=row["market_cap"],
         sector=row["sector"] or "",
+        # Session 47 item 6: the row's actual fetched_at, not "now" — without
+        # this, FundamentalData.as_of's default_factory silently stamps every
+        # cache hit with the current time regardless of how stale the served
+        # data actually is.
+        as_of=datetime.fromisoformat(row["fetched_at"]),
     )

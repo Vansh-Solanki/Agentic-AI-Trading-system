@@ -35,6 +35,7 @@ from agents.orchestrator import Orchestrator
 from execution.broker.alpaca import AlpacaBroker
 from news.finbert import get_finbert_pipeline
 from news.news_ingest import run_premarket_news_fetch
+from llm.client import warm_up_llm
 
 
 def _get_portfolio_value(fallback: float) -> float:
@@ -55,6 +56,12 @@ def main():
         logging.info("FinBERT ready.")
     else:
         logging.warning("FinBERT unavailable — continuing without it; sentiment scoring will use a neutral (0.0) fallback for this run.")
+
+    logging.info("Warming up LLM backend...")
+    if warm_up_llm():
+        logging.info("LLM backend warm.")
+    else:
+        logging.warning("LLM warm-up call failed — first real call this run may pay the full cold-load penalty.")
 
     all_timeframes = list(dict.fromkeys(INTRADAY_TIMEFRAMES + LONGTERM_TIMEFRAMES))
     warm_up(WATCHLIST, all_timeframes)

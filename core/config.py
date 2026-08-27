@@ -98,5 +98,40 @@ TICKER_TIMEOUT_SECONDS = int(os.getenv("TICKER_TIMEOUT_SECONDS", "150"))
 #   cap) needing to be re-derived against the new 90s cap.
 LLM_TIMEOUT_SECONDS = int(os.getenv("LLM_TIMEOUT_SECONDS", "90"))
 
+# ── Session 45: Technical Agent hybrid LLM escalation ─────────────────────────
+# Deterministic zone boundaries for RSI / Stoch RSI. Outside these bands the
+# reading is unambiguous and stays fully rule-based; inside them an LLM call
+# replaces what used to be silence (RSI/Stoch RSI) or a flat NEUTRAL default
+# (ADX) with a genuine buy/sell/hold verdict for that one indicator.
+RSI_LLM_ZONE_LOW        = float(os.getenv("RSI_LLM_ZONE_LOW", "30.0"))
+RSI_LLM_ZONE_HIGH       = float(os.getenv("RSI_LLM_ZONE_HIGH", "70.0"))
+STOCH_RSI_LLM_ZONE_LOW  = float(os.getenv("STOCH_RSI_LLM_ZONE_LOW", "25.0"))
+STOCH_RSI_LLM_ZONE_HIGH = float(os.getenv("STOCH_RSI_LLM_ZONE_HIGH", "75.0"))
+
+# Bollinger %B (percent bandwidth: 0 = at lower band, 1 = at upper band) zone
+# split. The locked design specifies "lower zone / middle / upper zone" but
+# no numeric split — these two values are an implementation choice, not a
+# locked number, and should be revisited if that turns out to be wrong.
+BB_LLM_ZONE_LOW_PCT_B   = float(os.getenv("BB_LLM_ZONE_LOW_PCT_B", "0.2"))
+BB_LLM_ZONE_HIGH_PCT_B  = float(os.getenv("BB_LLM_ZONE_HIGH_PCT_B", "0.8"))
+
+# Delta-based cache: an LLM call only fires if the indicator's raw value has
+# moved more than this many points since its last evaluation for that
+# ticker/timeframe/indicator; otherwise the cached prior verdict is reused
+# (see data/storage/llm_indicator_cache_store.py). RSI/Stoch RSI = literal
+# 5-point threshold, locked Session 45 (both true 0-100 scales). ADX and
+# Bollinger %B thresholds are NOT locked — Session 45 explicitly left their
+# normalized equivalents undecided. Provisional values below exist so caching
+# isn't skipped entirely for those two; revisit once a real number is chosen.
+RSI_LLM_DELTA_THRESHOLD       = float(os.getenv("RSI_LLM_DELTA_THRESHOLD", "5.0"))
+STOCH_RSI_LLM_DELTA_THRESHOLD = float(os.getenv("STOCH_RSI_LLM_DELTA_THRESHOLD", "5.0"))
+ADX_LLM_DELTA_THRESHOLD       = float(os.getenv("ADX_LLM_DELTA_THRESHOLD", "3.0"))
+BB_LLM_DELTA_THRESHOLD_PCT_B  = float(os.getenv("BB_LLM_DELTA_THRESHOLD_PCT_B", "0.05"))
+
+# Fixed confidence assigned to a signal produced from an LLM indicator
+# verdict — same pattern as MACD's fixed 0.65, since the LLM returns a
+# direction, not a magnitude, for these ambiguous-zone reads.
+LLM_INDICATOR_VOTE_CONFIDENCE = float(os.getenv("LLM_INDICATOR_VOTE_CONFIDENCE", "0.55"))
+
 # ── Logging ───────────────────────────────────────────────────────────────────
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

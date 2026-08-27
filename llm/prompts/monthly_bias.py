@@ -16,11 +16,12 @@ Fundamental snapshot:
 
 Recent news themes:
 {news_summary}{quarterly_section}
-Provide a monthly investment thesis in 4-5 sentences:
-1. Fundamental valuation stance (overvalued / fair / undervalued)
-2. Key growth or risk drivers for the next 30 days
-3. Catalyst calendar (earnings, product releases, macro events)
-4. Suggested position size relative to a standard allocation (overweight / neutral / underweight)
-5. Primary risk that would invalidate the thesis
+Respond with ONLY valid JSON — no prose, no markdown, no code fences. Schema:
+{{
+  "stance": "bullish" | "bearish" | "neutral",
+  "valuation": "overvalued" | "fair" | "undervalued",
+  "position_size": "overweight" | "neutral" | "underweight",
+  "risk": "one sentence — primary risk that would invalidate the thesis"
+}}
 
-Be precise. Do not hedge every statement."""
+Be precise. Do not hedge every field."""

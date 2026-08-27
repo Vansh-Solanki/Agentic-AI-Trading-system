@@ -148,6 +148,16 @@ def init_schema() -> None:
             fetched_at      TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS llm_indicator_cache (
+            ticker        TEXT NOT NULL,
+            timeframe     TEXT NOT NULL,
+            indicator     TEXT NOT NULL,
+            last_value    REAL NOT NULL,
+            last_verdict  TEXT NOT NULL,
+            last_call_at  TEXT NOT NULL,
+            PRIMARY KEY (ticker, timeframe, indicator)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_signals_ticker ON signals(ticker);
         CREATE INDEX IF NOT EXISTS idx_decisions_ticker ON trade_decisions(ticker);
         CREATE INDEX IF NOT EXISTS idx_news_published ON news(published_at);

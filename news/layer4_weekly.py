@@ -2,18 +2,19 @@ import logging
 from core.config import LLM_TIMEOUT_SECONDS
 from core.models import Signal
 from core.constants import SignalType, SignalSource, Timeframe
-from data.storage.news_store import get_recent_news
+from data.storage.news_store import get_recent_news_events
 from data.storage.stock_memory_store import get_memory
 from data.cache.market_data_cache import get_candles
 from llm.client import query_llm
 from llm.prompts.weekly_bias import build_weekly_bias_prompt
+from llm.response_parser import parse_stance_json
 
 logger = logging.getLogger(__name__)
 
 
 def run_weekly_analysis(ticker: str) -> list[Signal]:
     """Layer 4 — Weekly directional bias via LLM, combining stored news + technical context + quarterly thesis."""
-    rows = get_recent_news(ticker, limit=30)
+    rows = get_recent_news_events(ticker, hours_back=168)  # 7 days, matches weekly horizon
     if not rows:
         return []
 
@@ -33,10 +34,13 @@ def run_weekly_analysis(ticker: str) -> list[Signal]:
         logger.warning("Layer 4: %s — LLM call failed, skipping weekly thesis this cycle.", ticker)
         return []
 
-    lower = llm_response.lower()
-    if any(w in lower for w in ("accumulate", "bullish", "uptrend", "buy")):
+    parsed = parse_stance_json(
+        llm_response, extra_fields=("technical_structure", "recommended_action", "risk")
+    )
+    stance = parsed["stance"]
+    if stance == "bullish":
         stype, conf = SignalType.BUY, 0.6
-    elif any(w in lower for w in ("avoid", "bearish", "downtrend", "sell", "reduce")):
+    elif stance == "bearish":
         stype, conf = SignalType.SELL, 0.6
     else:
         stype, conf = SignalType.NEUTRAL, 0.4
@@ -48,8 +52,14 @@ def run_weekly_analysis(ticker: str) -> list[Signal]:
         timeframe=Timeframe.W1,
         confidence=conf,
         value=None,
-        reasoning=f"Weekly LLM bias: {llm_response[:150]}",
-        metadata={"layer": 4, "llm_response": llm_response},
+        reasoning=(
+            f"Weekly LLM bias ({stance}): {parsed.get('technical_structure') or ''} "
+            f"| Action: {parsed.get('recommended_action') or 'n/a'} | Risk: {parsed.get('risk') or ''}"
+        )[:250],
+        metadata={
+            "layer": 4, "llm_response": llm_response, "stance": stance,
+            "recommended_action": parsed.get("recommended_action"),
+        },
     )]
 
 

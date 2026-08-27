@@ -74,3 +74,12 @@ LONGTERM_TIMEFRAMES  = [Timeframe.H4, Timeframe.D1, Timeframe.W1, Timeframe.MN1]
 
 # Minimum candles needed before indicators are reliable
 MIN_CANDLES_REQUIRED = 50
+
+# Session 45 (locked, Option B): the only timeframe per mode allowed to
+# trigger its own LLM escalation call for RSI/Stoch RSI/Bollinger/ADX. Other
+# timeframes in the same mode still compute real indicator values and vote
+# deterministically outside the ambiguous zone, but inherit this timeframe's
+# verdict instead of making their own call when their own reading is
+# ambiguous — bounds LLM call volume instead of one call per timeframe.
+INTRADAY_LLM_CANONICAL_TIMEFRAME  = Timeframe.H1
+LONGTERM_LLM_CANONICAL_TIMEFRAME  = Timeframe.D1

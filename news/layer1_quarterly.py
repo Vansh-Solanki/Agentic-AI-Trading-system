@@ -8,6 +8,7 @@ from data.storage.stock_memory_store import upsert_memory
 from news.finbert import score_batch
 from llm.client import query_llm
 from llm.prompts.quarterly_analysis import build_quarterly_analysis_prompt
+from llm.response_parser import parse_stance_json
 
 logger = logging.getLogger(__name__)
 
@@ -73,13 +74,25 @@ def run_quarterly_analysis(ticker: str, llm_timeout: int = LLM_TIMEOUT_SECONDS) 
         logger.warning("Layer 1: %s — LLM call failed, skipping quarterly_thesis update this cycle.", ticker)
         return []
 
-    # Persist quarterly thesis so Layer 4/5 can pull it into their prompts
-    upsert_memory(ticker, "long_term", "quarterly_thesis", llm_response)
+    parsed = parse_stance_json(
+        llm_response,
+        extra_fields=("earnings_trend", "analyst_sentiment", "institutional_tone", "reasoning"),
+    )
+    stance = parsed["stance"]
 
-    lower = llm_response.lower()
-    if any(w in lower for w in ("bullish", "beat", "accumulate", "raised guidance", "upgrade")):
+    # Persist a human-readable thesis (not the raw JSON blob) so Layer 4/5 can
+    # pull it into their own prompts as free-text context.
+    thesis_text = (
+        f"{stance.capitalize()} — earnings: {parsed.get('earnings_trend') or 'n/a'}; "
+        f"analysts: {parsed.get('analyst_sentiment') or 'n/a'}; "
+        f"institutional tone: {parsed.get('institutional_tone') or 'n/a'}. "
+        f"{parsed.get('reasoning') or ''}"
+    ).strip()
+    upsert_memory(ticker, "long_term", "quarterly_thesis", thesis_text)
+
+    if stance == "bullish":
         stype = SignalType.STRONG_BUY if avg_score > 0.3 else SignalType.BUY
-    elif any(w in lower for w in ("bearish", "miss", "distribution", "lowered guidance", "downgrade")):
+    elif stance == "bearish":
         stype = SignalType.STRONG_SELL if avg_score < -0.3 else SignalType.SELL
     else:
         stype = SignalType.NEUTRAL
@@ -93,6 +106,12 @@ def run_quarterly_analysis(ticker: str, llm_timeout: int = LLM_TIMEOUT_SECONDS) 
         timeframe=Timeframe.MN1,
         confidence=conf,
         value=avg_score,
-        reasoning=f"Quarterly earnings/analyst thesis: {llm_response[:150]}",
-        metadata={"layer": 1, "article_count": len(items), "finbert_avg": avg_score, "llm_response": llm_response},
+        reasoning=f"Quarterly earnings/analyst thesis: {thesis_text[:150]}",
+        metadata={
+            "layer": 1, "article_count": len(items), "finbert_avg": avg_score,
+            "llm_response": llm_response, "stance": stance,
+            "earnings_trend": parsed.get("earnings_trend"),
+            "analyst_sentiment": parsed.get("analyst_sentiment"),
+            "institutional_tone": parsed.get("institutional_tone"),
+        },
     )]

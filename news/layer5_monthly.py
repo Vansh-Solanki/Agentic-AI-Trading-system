@@ -2,11 +2,12 @@ import logging
 from core.config import LLM_TIMEOUT_SECONDS
 from core.models import Signal
 from core.constants import SignalType, SignalSource, Timeframe
-from data.storage.news_store import get_recent_news
+from data.storage.news_store import get_recent_news_events
 from data.storage.stock_memory_store import get_memory
 from data.feeds.fundamentals_feed import fetch_fundamentals
 from llm.client import query_llm
 from llm.prompts.monthly_bias import build_monthly_bias_prompt
+from llm.response_parser import parse_stance_json
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ def run_monthly_analysis(ticker: str, llm_timeout: int = LLM_TIMEOUT_SECONDS) ->
     `llm_timeout`: defaults to the shared LLM_TIMEOUT_SECONDS constant
     (core/config.py) rather than its own hardcoded value.
     """
-    rows = get_recent_news(ticker, limit=40)
+    rows = get_recent_news_events(ticker, hours_back=720)  # 30 days, matches monthly horizon
     if not rows:
         return []
 
@@ -37,10 +38,13 @@ def run_monthly_analysis(ticker: str, llm_timeout: int = LLM_TIMEOUT_SECONDS) ->
         logger.warning("Layer 5: %s — LLM call failed, skipping monthly thesis this cycle.", ticker)
         return []
 
-    lower = llm_response.lower()
-    if any(w in lower for w in ("overweight", "undervalued", "accumulate", "bullish")):
+    parsed = parse_stance_json(
+        llm_response, extra_fields=("valuation", "position_size", "risk")
+    )
+    stance = parsed["stance"]
+    if stance == "bullish":
         stype, conf = SignalType.BUY, 0.65
-    elif any(w in lower for w in ("underweight", "overvalued", "avoid", "bearish")):
+    elif stance == "bearish":
         stype, conf = SignalType.SELL, 0.65
     else:
         stype, conf = SignalType.NEUTRAL, 0.4
@@ -52,8 +56,14 @@ def run_monthly_analysis(ticker: str, llm_timeout: int = LLM_TIMEOUT_SECONDS) ->
         timeframe=Timeframe.MN1,
         confidence=conf,
         value=None,
-        reasoning=f"Monthly LLM thesis: {llm_response[:150]}",
-        metadata={"layer": 5, "llm_response": llm_response},
+        reasoning=(
+            f"Monthly LLM thesis ({stance}): valuation={parsed.get('valuation') or 'n/a'}, "
+            f"position={parsed.get('position_size') or 'n/a'} | Risk: {parsed.get('risk') or ''}"
+        )[:250],
+        metadata={
+            "layer": 5, "llm_response": llm_response, "stance": stance,
+            "valuation": parsed.get("valuation"), "position_size": parsed.get("position_size"),
+        },
     )]
 
 

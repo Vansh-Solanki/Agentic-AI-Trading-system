@@ -16,10 +16,12 @@ Recent news context:
 
 Technical posture:
 {technical_summary}{quarterly_section}
-Provide a weekly directional bias in 3-4 sentences:
-1. Macro/sector tailwinds or headwinds
-2. Technical structure (trend, key levels)
-3. Recommended stance (accumulate / hold / reduce / avoid) with reasoning
-4. Top downside risk this week
+Respond with ONLY valid JSON — no prose, no markdown, no code fences. Schema:
+{{
+  "stance": "bullish" | "bearish" | "neutral",
+  "technical_structure": "one sentence — trend, key levels",
+  "recommended_action": "accumulate" | "hold" | "reduce" | "avoid",
+  "risk": "one sentence — top downside risk this week"
+}}
 
 Be direct and avoid restating the input data."""

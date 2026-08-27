@@ -1,3 +1,5 @@
+import logging
+from datetime import datetime, timezone
 import numpy as np
 from core.constants import SignalType, SignalSource, Timeframe
 from core.models import AgentOutput, Signal, FundamentalData
@@ -5,7 +7,10 @@ from agents.base_agent import BaseAgent
 from data.feeds.fundamentals_feed import fetch_fundamentals
 from data.storage.fundamentals_store import get_fundamentals_cache, save_fundamentals_cache
 
+logger = logging.getLogger(__name__)
+
 _MIN_FLOOR = 0.50
+_STALENESS_WARN_HOURS = 12
 
 
 def _sigmoid_conf(x: float, steepness: float) -> float:
@@ -77,18 +82,30 @@ class FundamentalAgent(BaseAgent):
         if data is None:
             data = fetch_fundamentals(ticker)
             save_fundamentals_cache(data)
+        else:
+            age_hours = (datetime.now(timezone.utc) - data.as_of).total_seconds() / 3600
+            if age_hours > _STALENESS_WARN_HOURS:
+                logger.warning(
+                    "[%s] Fundamentals cache hit is %.1fh old (warn threshold %dh, TTL 24h).",
+                    ticker, age_hours, _STALENESS_WARN_HOURS,
+                )
         signals = self._score(data)
         summary = (
             f"P/E={data.pe_ratio}, P/B={data.pb_ratio}, "
             f"RevGrowth={data.revenue_growth}, EarnGrowth={data.earnings_growth}, "
             f"D/E={data.debt_to_equity}"
         )
+        # Session 47 item 6: use the data's actual fetched_at/as_of timestamp
+        # (accurate on both cache hit and live fetch) instead of AgentOutput's
+        # default_factory, which would otherwise always stamp "now" even when
+        # the served fundamentals are close to the 24h TTL boundary.
         output = AgentOutput(
             agent_name=self.name,
             ticker=ticker,
             signals=signals,
             summary=summary,
             raw_data=data.__dict__,
+            timestamp=data.as_of,
         )
         self._log_output(output)
         return output
