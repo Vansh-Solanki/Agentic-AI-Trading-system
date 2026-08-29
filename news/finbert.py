@@ -6,6 +6,16 @@ logger = logging.getLogger(__name__)
 _pipeline = None
 _pipeline_lock = threading.Lock()
 
+# Guards the actual pipe(truncated) call in score_sentiment(), separate from
+# _pipeline_lock above (which only guards one-time model loading). The first
+# real inference call triggers a one-time, non-thread-safe registration inside
+# transformers (registering ModelOutput as a pytree node) — if two ticker
+# threads make their first inference call concurrently, the loser crashes with
+# "ModelOutput is already registered as pytree node" instead of scoring.
+# A plain Lock (not a bounded semaphore) is enough: this isn't a throughput
+# control, just serializing past that one-time registration.
+_inference_lock = threading.Lock()
+
 
 def get_finbert_pipeline():
     """
@@ -68,7 +78,8 @@ def score_sentiment(text: str) -> float:
 
     truncated = text[:512]
     try:
-        results = pipe(truncated)[0]
+        with _inference_lock:
+            results = pipe(truncated)[0]
         scores = {r["label"]: r["score"] for r in results}
         return scores.get("positive", 0.0) - scores.get("negative", 0.0)
     except Exception:

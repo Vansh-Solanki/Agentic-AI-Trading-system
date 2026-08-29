@@ -70,6 +70,24 @@ PIPELINE_CYCLE_SECS = int(os.getenv("PIPELINE_CYCLE_SECS", "300"))
 PHASE1_AGENT_TIMEOUT_SECONDS = int(os.getenv("PHASE1_AGENT_TIMEOUT_SECONDS", "100"))
 TICKER_TIMEOUT_SECONDS = int(os.getenv("TICKER_TIMEOUT_SECONDS", "150"))
 
+# Session 51 item (51B): premarket-only override of the two constants above.
+# Session 51 removed llm/client.py's non-blocking Ollama queue limiter, so
+# every LLM call now genuinely waits its turn on the single Ollama slot
+# instead of being rejected past 3-deep — measured worst case in a real
+# premarket run was ~125s (102.6s wait + 22.8s call), comfortably under this
+# 240s premarket-only Phase 1 budget (~2x headroom over the observed worst
+# case). Live's PHASE1_AGENT_TIMEOUT_SECONDS (100s) is intentionally left
+# unchanged pending its own live-log verification — premarket has no hard
+# time budget (30-minute ceiling, current runs ~10-14 minutes) so absorbing
+# more queue wait there is a fine tradeoff; live's per-cycle budget is not
+# yet confirmed to have the same slack. PREMARKET_TICKER_TIMEOUT_SECONDS is
+# raised in lockstep with the same +50s margin already used for phases 2-4
+# (risk/decision/memory) in the live pair above — otherwise the outer bound
+# would abandon a premarket ticker's future before its own Phase 1 timeout
+# ever got a chance to fire.
+PREMARKET_PHASE1_TIMEOUT_SECONDS = int(os.getenv("PREMARKET_PHASE1_TIMEOUT_SECONDS", "240"))
+PREMARKET_TICKER_TIMEOUT_SECONDS = int(os.getenv("PREMARKET_TICKER_TIMEOUT_SECONDS", "290"))
+
 # Session 39 (item 67 mitigation), unified Session 39 addendum: single shared
 # timeout for every query_llm() call in the app — live-cycle (Critic, Layer 3,
 # Layer 4) and the pre-market batch (Layers 1/2/5) alike. Originally two

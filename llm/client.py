@@ -3,6 +3,7 @@ import threading
 from typing import Optional
 import requests
 from core.config import OLLAMA_BASE_URL, OLLAMA_MODEL, ANTHROPIC_API_KEY, LLM_TIMEOUT_SECONDS
+import time 
 
 logger = logging.getLogger(__name__)
 
@@ -11,10 +12,27 @@ logger = logging.getLogger(__name__)
 # up to 10 tickers x multiple news/critic layers all calling query_llm()
 # concurrently within one Phase-1 cycle, requests queue behind each other and
 # tail requests blow through both Ollama's 60s read timeout and the
-# orchestrator's 30s Phase-1 agent timeout. Capping concurrent Ollama calls
+# orchestrator's 100s Phase-1 agent timeout. Capping concurrent Ollama calls
 # doesn't reduce total work, but keeps queuing civil instead of every thread
 # opening its own 60s-timeout connection at once.
 _ollama_semaphore = threading.Semaphore(1)
+
+# Session 51 item 67 (51A): a non-blocking queue limiter (BoundedSemaphore(3)
+# gating entry to _ollama_semaphore, added Session 48) used to reject any 4th+
+# concurrent caller outright instead of letting it wait. A premarket-run log
+# showed this was discarding most calls, not just delaying them: out of ~40
+# ticker/mode run_premarket_analysis() calls, only ~7 got a real LLM response
+# through the queue; the rest fell back to FinBERT-only NEUTRAL, effectively
+# disabling Layer 2's directional signal for most of the batch. Removed —
+# every caller now blocks on _ollama_semaphore and gets a genuine attempt (or
+# a genuine timeout/connection failure) instead of an artificial queue-depth
+# rejection. Accepted tradeoff: calls become strictly sequential, so total
+# batch runtime grows; premarket has no hard time budget so this is fine
+# there. NOT yet verified against the live/intraday path, which shares this
+# same module — if enough tickers need an LLM call in the same live cycle,
+# sequential blocking here could push waits past PHASE1_AGENT_TIMEOUT_SECONDS
+# or stack PIPELINE_CYCLE_SECS cycles under load. Revisit with a live log if
+# that surfaces; see progress.md item 67 for parked mitigation options.
 
 
 def query_llm(prompt: str, max_tokens: int = 512, timeout: int = LLM_TIMEOUT_SECONDS) -> Optional[str]:
@@ -61,13 +79,22 @@ def _query_ollama(prompt: str, max_tokens: int, timeout: int = LLM_TIMEOUT_SECON
         "stream": False,
         "options": {"num_predict": max_tokens},
     }
+    queue_start = time.monotonic()
     try:
         with _ollama_semaphore:
+            wait_time = time.monotonic() - queue_start
+            call_start = time.monotonic()
             resp = requests.post(url, json=payload, timeout=timeout)
+            call_time = time.monotonic() - call_start
         resp.raise_for_status()
+        logger.info(
+            "Ollama call succeeded — waited %.1fs for slot, call itself took %.1fs (prompt len=%d, max_tokens=%d)",
+            wait_time, call_time, len(prompt), max_tokens,
+        )
         return resp.json().get("response", "").strip()
     except Exception:
-        logger.exception("Ollama query failed")
+        total_time = time.monotonic() - queue_start
+        logger.exception("Ollama query failed after %.1fs total (wait + call)", total_time)
         return None
 
 

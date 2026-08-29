@@ -1,24 +1,29 @@
+import json
+import logging
 import threading
 import time
 import zlib
 from core.config import TradingMode
+from core.constants import SignalSource, SignalType, Timeframe
 from core.models import AgentOutput, Signal
 from agents.base_agent import BaseAgent
 from data.feeds.news_feed import fetch_intraday_news
-from news.layer1_quarterly import run_quarterly_analysis
+from data.storage.stock_memory_store import get_memory
 from news.layer2_premarket import run_premarket_analysis
 from news.layer3_spike import run_spike_detector
 from news.layer4_weekly import run_weekly_analysis
-from news.layer5_monthly import run_monthly_analysis
 
-# Run-frequency throttling (see progress.md Session 34/35): Layers 1, 2, 4, 5
-# produce identical output when re-run every 5-minute cycle and were wasting
-# Ollama calls. Only Layer 3 (spike detector) needs to run every cycle — it's
+logger = logging.getLogger(__name__)
+
+# Run-frequency throttling (see progress.md Session 34/35): Layer 4 produces
+# identical output when re-run every 5-minute cycle and was wasting Ollama
+# calls. Only Layer 3 (spike detector) needs to run every cycle — it's
 # already self-gated by ATR/volume conditions. Keyed by ticker; a
-# threading.Lock guards them since multiple tickers run concurrently.
-_last_run_layer1: dict[str, float] = {}
+# threading.Lock guards it since multiple tickers run concurrently.
+# Layers 1 and 5 used to have their own throttle dicts here (once-per-session)
+# but Session 49 moved them off the live path entirely — see
+# _cached_thesis_signal() below.
 _last_run_layer4: dict[str, float] = {}
-_last_run_layer5: dict[str, float] = {}
 _layer_timer_lock = threading.Lock()
 
 _LAYER4_INTERVAL_SECONDS = 3600
@@ -36,6 +41,47 @@ def _layer4_stagger_offset(ticker: str) -> float:
     runs so the same ticker always staggers to the same point in the hour.
     """
     return zlib.crc32(ticker.encode()) % _LAYER4_INTERVAL_SECONDS
+
+
+def _cached_thesis_signal(ticker: str, thesis_key: str, signal_key: str, layer: int) -> list[Signal]:
+    """
+    Session 49: Layers 1 (quarterly) and 5 (monthly) now only run live on
+    Mondays, via scripts/run_weekly_news.py — both ask slow-moving questions
+    that don't meaningfully change day to day. Tuesday through Sunday, this
+    reads back whatever Monday's run cached in stock_memory instead of
+    re-running the LLM analysis.
+
+    thesis_key ("quarterly_thesis"/"monthly_thesis") holds the free-text
+    thesis — unchanged format, still readable by Layer 4/5's own prompts.
+    signal_key ("quarterly_signal"/"monthly_signal") holds a small JSON
+    companion ({"signal_type", "confidence", ["value"]}) written alongside it
+    purely so this function can reconstruct an equivalent Signal without
+    re-deriving direction from the thesis prose — doing that would reintroduce
+    the exact keyword-scan collision risk Session 46 removed from the
+    free-text layers. Returns [] if either key is missing or malformed (e.g.
+    the weekly batch has never run yet for this ticker).
+    """
+    thesis_text = get_memory(ticker, "long_term", thesis_key)
+    signal_raw = get_memory(ticker, "long_term", signal_key)
+    if not thesis_text or not signal_raw:
+        return []
+    try:
+        parsed = json.loads(signal_raw)
+        stype = SignalType(parsed["signal_type"])
+        conf = float(parsed["confidence"])
+    except (json.JSONDecodeError, KeyError, ValueError):
+        logger.warning("Cached signal for %s (%s) is malformed — skipping.", ticker, signal_key)
+        return []
+    return [Signal(
+        ticker=ticker,
+        source=SignalSource.NEWS,
+        signal_type=stype,
+        timeframe=Timeframe.MN1,
+        confidence=conf,
+        value=parsed.get("value"),
+        reasoning=f"Cached (last computed Monday): {thesis_text[:150]}",
+        metadata={"layer": layer, "cached": True},
+    )]
 
 
 class NewsSentimentAgent(BaseAgent):
@@ -56,45 +102,52 @@ class NewsSentimentAgent(BaseAgent):
         # Local import: agents.orchestrator imports NewsSentimentAgent at module
         # level, so a top-level import here would be circular.
         from agents.orchestrator import _is_market_open
-        if not _is_market_open():
+        layer2_ran = not _is_market_open()
+        if layer2_ran:
             premarket_signals = run_premarket_analysis(ticker)
             signals.extend(premarket_signals)
 
         # Layer 4 — once per hour per ticker, staggered on first sight so all
         # 20 tickers don't re-synchronize onto the same hourly burst (item 66).
+        # Skipped whenever Layer 2 already made an LLM call this cycle: both
+        # allow up to LLM_TIMEOUT_SECONDS (90s) each, and two sequential calls
+        # can exceed PHASE1_AGENT_TIMEOUT_SECONDS (100s), which showed up in
+        # production as 'news' timing out with an empty output. Layer 4's own
+        # hourly stagger timer is left untouched, so it just fires next cycle
+        # instead of being skipped permanently.
         with _layer_timer_lock:
             if ticker not in _last_run_layer4:
                 _last_run_layer4[ticker] = (
                     time.monotonic() - _LAYER4_INTERVAL_SECONDS + _layer4_stagger_offset(ticker)
                 )
             run_layer4 = time.monotonic() - _last_run_layer4[ticker] >= _LAYER4_INTERVAL_SECONDS
-        if run_layer4:
+        if run_layer4 and not layer2_ran:
             weekly_signals = run_weekly_analysis(ticker)
             signals.extend(weekly_signals)
             with _layer_timer_lock:
                 _last_run_layer4[ticker] = time.monotonic()
 
-        # Layer 1 — once per session per ticker (never re-run once it has succeeded).
-        with _layer_timer_lock:
-            run_layer1 = ticker not in _last_run_layer1
-        if run_layer1:
-            quarterly_signals = run_quarterly_analysis(ticker)
-            signals.extend(quarterly_signals)
-            with _layer_timer_lock:
-                _last_run_layer1[ticker] = time.monotonic()
-
-        # Layer 5 — once per session per ticker (never re-run once it has succeeded).
+        # Layer 1 (quarterly) and Layer 5 (monthly) — Session 49: no longer
+        # run live. Both now run once, Monday only, via
+        # scripts/run_weekly_news.py; every other day just reads back
+        # whatever Monday cached in stock_memory (see _cached_thesis_signal()
+        # above). Mode-scoping unchanged from before: quarterly is read in
+        # both modes, monthly only in LONG_TERM.
+        signals.extend(_cached_thesis_signal(ticker, "quarterly_thesis", "quarterly_signal", layer=1))
         if self.mode == TradingMode.LONG_TERM:
-            with _layer_timer_lock:
-                run_layer5 = ticker not in _last_run_layer5
-            if run_layer5:
-                monthly_signals = run_monthly_analysis(ticker)
-                signals.extend(monthly_signals)
-                with _layer_timer_lock:
-                    _last_run_layer5[ticker] = time.monotonic()
+            signals.extend(_cached_thesis_signal(ticker, "monthly_thesis", "monthly_signal", layer=5))
 
-        layers = "spike+daily+weekly+quarterly" if self.mode == TradingMode.INTRADAY else "daily+weekly+quarterly+monthly"
-        summary = f"{len(signals)} news-driven signals for {ticker} ({layers})"
+        layer_parts = []
+        if self.mode == TradingMode.INTRADAY:
+            layer_parts.append("spike")
+        if layer2_ran:
+            layer_parts.append("daily")
+        if run_layer4 and not layer2_ran:
+            layer_parts.append("weekly")
+        layer_parts.append("cached_quarterly")
+        if self.mode == TradingMode.LONG_TERM:
+            layer_parts.append("cached_monthly")
+        summary = f"{len(signals)} news-driven signals for {ticker} ({'+'.join(layer_parts)})"
         output = AgentOutput(agent_name=self.name, ticker=ticker, signals=signals, summary=summary)
         self._log_output(output)
         return output

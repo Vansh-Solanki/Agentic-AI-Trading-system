@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from core.config import (
     TradingMode, WATCHLIST, ALPACA_API_KEY, ALPACA_SECRET_KEY, PAPER_TRADING,
     PHASE1_AGENT_TIMEOUT_SECONDS, TICKER_TIMEOUT_SECONDS,
+    PREMARKET_PHASE1_TIMEOUT_SECONDS, PREMARKET_TICKER_TIMEOUT_SECONDS,
 )
 from core.constants import RegimeType, SignalType, OrderSide, OrderType, Timeframe, INTRADAY_TIMEFRAMES, LONGTERM_TIMEFRAMES
 from core.models import AgentOutput, Signal, TradePlan
@@ -288,11 +289,14 @@ class Orchestrator:
         # pool without waiting on stragglers — they keep running in the
         # background (Python can't cancel a running thread), but nothing
         # reads their result again.
+        # Session 51 (51B): premarket gets a longer Phase 1 budget than live —
+        # see core/config.py for the measured numbers behind 240s.
+        phase1_timeout = PREMARKET_PHASE1_TIMEOUT_SECONDS if premarket_only else PHASE1_AGENT_TIMEOUT_SECONDS
         p1_pool = ThreadPoolExecutor(max_workers=5)
         p1_futures = {name: p1_pool.submit(agent.run, ticker) for name, agent in _phase1.items()}
         for name, fut in p1_futures.items():
             try:
-                results[name] = fut.result(timeout=PHASE1_AGENT_TIMEOUT_SECONDS)
+                results[name] = fut.result(timeout=phase1_timeout)
             except TimeoutError:
                 logger.error("[%s] Phase 1 agent '%s' timed out — using empty output", ticker, name)
                 results[name] = AgentOutput(agent_name=name, ticker=ticker, signals=[], summary="Timed out.")
@@ -554,14 +558,59 @@ class Orchestrator:
         # instead, so an expired future is abandoned (not waited on) rather
         # than silently continuing to block on it.
         all_results: dict[str, dict[str, AgentOutput]] = {}
-        executor = ThreadPoolExecutor(max_workers=10)
+        # Lowered from 10: each ticker's Phase 1 news/technical agents compete
+        # for the single Ollama generation slot (llm/client.py's
+        # _ollama_semaphore). 10 concurrent tickers meant up to ~20
+        # simultaneous LLM callers all blocking on that one slot; 5 halves
+        # per-wave demand on that bottleneck. (Session 51: the queue-depth
+        # limiter that used to sit in front of the semaphore was removed
+        # entirely — see llm/client.py — so this max_workers value is now the
+        # only lever controlling how many threads pile up waiting on it.)
+        max_workers = 5
+        executor = ThreadPoolExecutor(max_workers=max_workers)
+
+        # Session addendum: with 20 tickers and 10 workers, the second wave
+        # of futures sits queued behind the first. Stamping the deadline at
+        # submission time (previously `monotonic() + TICKER_TIMEOUT_SECONDS`
+        # for every future in one loop, right after executor.submit()) meant
+        # queued tickers inherited a countdown that started before their
+        # thread ever ran — a ticker could lose most of its budget just
+        # waiting for a worker to free up. start_times is only written once
+        # per ticker, from inside that ticker's own worker thread, so the
+        # deadline now reflects when the ticker's run_ticker actually began.
+        start_times: dict[str, float] = {}
+
+        def _timed_run_ticker(ticker: str, closed_outcome, premarket_only: bool):
+            start_times[ticker] = monotonic()
+            return self.run_ticker(ticker, closed_outcome, premarket_only)
+
         futures = {
             executor.submit(
-                self.run_ticker, ticker, closed_outcomes.get((ticker, self.mode.value)), premarket_only
+                _timed_run_ticker, ticker, closed_outcomes.get((ticker, self.mode.value)), premarket_only
             ): ticker
             for ticker in WATCHLIST
         }
-        deadlines = {fut: monotonic() + TICKER_TIMEOUT_SECONDS for fut in futures}
+
+        # Edge case (per-start fairness alone can hang run_all() forever):
+        # ThreadPoolExecutor cannot kill a running thread, so a future we
+        # abandon on timeout keeps occupying its worker for as long as it
+        # keeps running. If enough first-wave tickers genuinely hang, every
+        # worker can stay permanently busy for the rest of this call, and a
+        # later-queued ticker never gets dispatched at all — no start_times
+        # entry, so it would never expire under the per-start deadline alone
+        # and the polling loop below would never terminate. batch_deadline is
+        # a backstop only for futures that never started: sized to the
+        # worst-case legitimate queue depth (ceil(tickers / workers) waves)
+        # so it doesn't cut off a ticker that's still fairly waiting its
+        # turn, but still guarantees this method returns even if some
+        # workers are wedged.
+        # Session 51 (51B): raised in lockstep with phase1_timeout above so
+        # the outer bound doesn't abandon a premarket ticker before its own
+        # (longer) Phase 1 timeout ever gets a chance to fire.
+        ticker_timeout = PREMARKET_TICKER_TIMEOUT_SECONDS if premarket_only else TICKER_TIMEOUT_SECONDS
+        num_waves = -(-len(futures) // max_workers)  # ceil division
+        batch_deadline = monotonic() + num_waves * ticker_timeout
+
         pending = set(futures)
         while pending:
             done, pending = futures_wait(pending, timeout=1, return_when=FIRST_COMPLETED)
@@ -572,10 +621,21 @@ class Orchestrator:
                 except Exception:
                     logger.exception("[%s] Unhandled error in run_ticker — skipping ticker.", ticker)
             now = monotonic()
-            expired = {fut for fut in pending if now >= deadlines[fut]}
-            for fut in expired:
+            expired = set()
+            for fut in pending:
                 ticker = futures[fut]
-                logger.error("[%s] run_ticker timed out after %ds — skipping ticker.", ticker, TICKER_TIMEOUT_SECONDS)
+                start = start_times.get(ticker)
+                if start is not None:
+                    if now >= start + ticker_timeout:
+                        logger.error("[%s] run_ticker timed out after %ds — skipping ticker.", ticker, ticker_timeout)
+                        expired.add(fut)
+                elif now >= batch_deadline:
+                    logger.error(
+                        "[%s] never got a worker within the %ds batch deadline — skipping ticker.",
+                        ticker, num_waves * ticker_timeout,
+                    )
+                    expired.add(fut)
+            for fut in expired:
                 pending.discard(fut)
         executor.shutdown(wait=False)
         return all_results

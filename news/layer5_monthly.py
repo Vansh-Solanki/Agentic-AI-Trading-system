@@ -1,9 +1,10 @@
+import json
 import logging
 from core.config import LLM_TIMEOUT_SECONDS
 from core.models import Signal
 from core.constants import SignalType, SignalSource, Timeframe
 from data.storage.news_store import get_recent_news_events
-from data.storage.stock_memory_store import get_memory
+from data.storage.stock_memory_store import get_memory, upsert_memory
 from data.feeds.fundamentals_feed import fetch_fundamentals
 from llm.client import query_llm
 from llm.prompts.monthly_bias import build_monthly_bias_prompt
@@ -15,6 +16,11 @@ logger = logging.getLogger(__name__)
 def run_monthly_analysis(ticker: str, llm_timeout: int = LLM_TIMEOUT_SECONDS) -> list[Signal]:
     """
     Layer 5 — Monthly investment thesis via LLM, combining fundamentals + stored news + quarterly thesis.
+    Session 49: no longer runs live — only called from scripts/run_weekly_news.py
+    (Monday-only); the live pipeline reads the cached result back the rest of
+    the week instead (agents/news_sentiment.py). Persists its thesis to
+    stock_memory (previously it did not persist anything at all, unlike
+    Layer 1's quarterly_thesis) so there's something to read Tuesday-Sunday.
 
     `llm_timeout`: defaults to the shared LLM_TIMEOUT_SECONDS constant
     (core/config.py) rather than its own hardcoded value.
@@ -48,6 +54,19 @@ def run_monthly_analysis(ticker: str, llm_timeout: int = LLM_TIMEOUT_SECONDS) ->
         stype, conf = SignalType.SELL, 0.65
     else:
         stype, conf = SignalType.NEUTRAL, 0.4
+
+    # Persist a human-readable thesis, mirroring Layer 1's existing
+    # quarterly_thesis pattern, so the live pipeline's cached-signal read
+    # path has something to read back Tuesday-Sunday (see
+    # agents/news_sentiment.py::_cached_thesis_signal()).
+    thesis_text = (
+        f"{stance.capitalize()} — valuation: {parsed.get('valuation') or 'n/a'}; "
+        f"position sizing: {parsed.get('position_size') or 'n/a'}. {parsed.get('risk') or ''}"
+    ).strip()
+    upsert_memory(ticker, "long_term", "monthly_thesis", thesis_text)
+    upsert_memory(ticker, "long_term", "monthly_signal", json.dumps({
+        "signal_type": stype.value, "confidence": conf,
+    }))
 
     return [Signal(
         ticker=ticker,

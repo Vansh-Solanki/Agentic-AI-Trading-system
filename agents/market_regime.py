@@ -41,7 +41,7 @@ class MarketRegimeAgent(BaseAgent):
         current = float(close.iloc[-1])
 
         vix_level = float(vix["Close"].iloc[-1]) if not vix.empty else 20.0
-        returns   = close.pct_change().dropna().tail(20)
+        returns   = close.pct_change(fill_method=None).dropna().tail(20)
         realized_vol = float(returns.std() * np.sqrt(252))
 
         # High volatility takes priority — a breakout in a volatile tape is still risky

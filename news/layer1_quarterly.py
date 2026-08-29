@@ -1,11 +1,10 @@
+import json
 import logging
 from core.config import LLM_TIMEOUT_SECONDS
-from core.models import NewsItem, Signal
+from core.models import Signal
 from core.constants import SignalType, SignalSource, Timeframe
-from data.feeds.news_feed import fetch_news
-from data.storage.news_store import save_news, get_recent_news
+from data.storage.news_store import get_recent_news_events
 from data.storage.stock_memory_store import upsert_memory
-from news.finbert import score_batch
 from llm.client import query_llm
 from llm.prompts.quarterly_analysis import build_quarterly_analysis_prompt
 from llm.response_parser import parse_stance_json
@@ -20,47 +19,50 @@ _EARNINGS_KEYWORDS = {
 }
 
 
-def _is_earnings_relevant(item: NewsItem) -> bool:
-    text = (item.headline + " " + item.summary).lower()
+def _is_earnings_relevant(row: dict) -> bool:
+    text = ((row.get("headline") or "") + " " + (row.get("raw_summary") or "")).lower()
     return any(kw in text for kw in _EARNINGS_KEYWORDS)
 
 
 def run_quarterly_analysis(ticker: str, llm_timeout: int = LLM_TIMEOUT_SECONDS) -> list[Signal]:
     """
     Layer 1 — Quarterly earnings/analyst narrative.
-    Fetches 90-day news, filters for earnings/analyst content, scores with FinBERT,
-    escalates to LLM for a quarterly thesis, and stores the thesis in stock_memory
-    so Layer 4 (weekly) and Layer 5 (monthly) can incorporate it.
-    Only called in LONG_TERM mode.
+    Reads 90-day already-scored news_events rows, filters for earnings/analyst
+    content, escalates to LLM for a quarterly thesis, and stores the thesis in
+    stock_memory so Layer 4 (weekly) and Layer 5 (monthly) can incorporate it.
+    Session 49: no longer runs live — only called from scripts/run_weekly_news.py
+    (Monday-only); the live pipeline reads the cached result back the rest of
+    the week instead (agents/news_sentiment.py).
+
+    Session 49 fix: previously called fetch_news()/save_news() (the old,
+    independent "news" table) instead of get_recent_news_events() (the
+    "news_events" table Layer 2/3/4/5 actually write to and read from) — the
+    same class of bug already fixed for Layer 4/5 in Session 45. Reading
+    through news_events also means these rows are already FinBERT-scored at
+    ingestion time, so this no longer needs its own score_batch() pass.
 
     `llm_timeout`: defaults to the shared LLM_TIMEOUT_SECONDS constant
     (core/config.py) rather than its own hardcoded value.
     """
-    raw_items = fetch_news([ticker], hours_back=90 * 24, max_articles=50)
-    for item in raw_items:
-        item.layer = 1
+    rows = get_recent_news_events(ticker, hours_back=90 * 24)
+    if not rows:
+        return []
 
     # Filter to earnings/analyst relevant articles
-    items = [i for i in raw_items if _is_earnings_relevant(i)]
+    items = [r for r in rows if _is_earnings_relevant(r)]
     if not items:
-        # Fall back to all fetched items rather than returning nothing
-        items = raw_items
+        # Fall back to all fetched rows rather than returning nothing
+        items = rows
 
-    headlines = [i.headline + " " + i.summary for i in items]
-    scores    = score_batch(headlines)
-    for item, score in zip(items, scores):
-        item.sentiment_score = score
-
-    save_news(items)
-
+    scores = [r["sentiment_score"] for r in items if r.get("sentiment_score") is not None]
     if not scores:
         return []
 
     avg_score = sum(scores) / len(scores)
 
     # Build earnings headlines text for LLM
-    sorted_items  = sorted(items, key=lambda i: abs(i.sentiment_score or 0), reverse=True)[:10]
-    earnings_text = "\n".join(f"- {i.headline}" for i in sorted_items) or "No earnings/analyst headlines found."
+    sorted_items  = sorted(items, key=lambda r: abs(r.get("sentiment_score") or 0), reverse=True)[:10]
+    earnings_text = "\n".join(f"- {r['headline']}" for r in sorted_items) or "No earnings/analyst headlines found."
 
     prompt       = build_quarterly_analysis_prompt(ticker, earnings_text, avg_score)
     llm_response = query_llm(prompt, max_tokens=300, timeout=llm_timeout)
@@ -98,6 +100,16 @@ def run_quarterly_analysis(ticker: str, llm_timeout: int = LLM_TIMEOUT_SECONDS) 
         stype = SignalType.NEUTRAL
 
     conf = min(abs(avg_score) + 0.1, 0.9)
+
+    # Session 49: small structured companion to quarterly_thesis, written
+    # purely so the live pipeline's cached-signal read path (see
+    # agents/news_sentiment.py::_cached_thesis_signal()) can reconstruct an
+    # equivalent Signal on non-Monday days without re-deriving stance from
+    # the free-text thesis prose — that would reintroduce the exact
+    # keyword-scan collision risk Session 46 removed from the free-text layers.
+    upsert_memory(ticker, "long_term", "quarterly_signal", json.dumps({
+        "signal_type": stype.value, "confidence": conf, "value": avg_score,
+    }))
 
     return [Signal(
         ticker=ticker,
