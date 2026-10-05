@@ -46,3 +46,7 @@ Thumbs.db
 *.patch
 *.diff
 *.bak
+
+log.text
+16th logs.txt
+git grep*
