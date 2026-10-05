@@ -1,11 +1,12 @@
 import logging
-from core.config import LLM_TIMEOUT_SECONDS
+from core.config import LLM_TIMEOUT_SECONDS, LAYER2_CACHE_TTL_MINUTES
 from core.models import NewsItem, Signal
 from core.constants import SignalType, SignalSource, Timeframe
 from data.feeds.news_feed import fetch_premarket_news
 from data.storage.news_store import save_news, save_news_event
 from news.finbert import score_batch
 from news.news_ingest import sentiment_label
+from news.layer2_cache import get_cached_layer2_signal, save_layer2_signal
 from llm.client import query_llm
 from llm.prompts.daily_bias import build_daily_bias_prompt
 from llm.response_parser import parse_stance_json
@@ -17,6 +18,7 @@ def run_premarket_analysis(
     ticker: str,
     llm_timeout: int = LLM_TIMEOUT_SECONDS,
     items_out: list[NewsItem] | None = None,
+    force_refresh: bool = False,
 ) -> list[Signal]:
     """
     Layer 2 — Pre-market deep analysis.
@@ -32,11 +34,29 @@ def run_premarket_analysis(
     fetches and two FinBERT passes over what is very likely the same
     articles, on two Python objects that never shared state. The batch job
     now passes a list here and reuses these already-scored objects instead
-    of re-fetching and re-scoring.
+    of re-fetching and re-scoring. Stays empty on a cache hit (see below) —
+    there's nothing freshly fetched to hand back.
 
     `llm_timeout`: defaults to the shared LLM_TIMEOUT_SECONDS constant
     (core/config.py) rather than its own hardcoded value.
+
+    `force_refresh` (Bug 4 fix): a premarket run used to call this three
+    times per ticker — once from the news_ingest.py batch, then again from
+    NewsSentimentAgent.run() for each of the intraday and long-term
+    Orchestrators — each a fresh fetch + FinBERT pass + LLM call for the
+    same daily-bias question within minutes of each other (confirmed live:
+    NVDA's identical prompt three times in ~15 minutes on Oct 4). When
+    False (the default — used by the two live per-cycle callers), a cached
+    result younger than LAYER2_CACHE_TTL_MINUTES is returned as-is with no
+    fetch, no FinBERT, no LLM call, and no DB writes. When True (used by the
+    news_ingest.py batch, which should always do the real work and refresh
+    what the live callers read), the cache read is skipped entirely.
     """
+    if not force_refresh:
+        cached = get_cached_layer2_signal(ticker, LAYER2_CACHE_TTL_MINUTES)
+        if cached is not None:
+            return [cached]
+
     items = fetch_premarket_news([ticker])
     if not items:
         return []
@@ -87,7 +107,7 @@ def run_premarket_analysis(
         risk = parsed.get("risk") or ""
         reasoning = f"Pre-market LLM bias ({stype.value}): {catalyst} | Risk: {risk} | FinBERT={avg_score:.3f}"
 
-    return [Signal(
+    signal = Signal(
         ticker=ticker,
         source=SignalSource.NEWS,
         signal_type=stype,
@@ -96,4 +116,14 @@ def run_premarket_analysis(
         value=avg_score,
         reasoning=reasoning,
         metadata={"layer": 2, "llm_response": llm_response, "finbert_avg": avg_score, "llm_failed": llm_failed},
-    )]
+    )
+
+    # Bug 4 fix: only cache a genuinely completed analysis. Never cache an
+    # LLM-failure fallback — this protects the XOM case (batch fetch failed,
+    # a later same-day pass recovered it): if the failure were cached, that
+    # later pass would just replay the same degraded NEUTRAL result instead
+    # of getting a real chance to retry.
+    if not llm_failed:
+        save_layer2_signal(ticker, signal, article_count=len(items))
+
+    return [signal]

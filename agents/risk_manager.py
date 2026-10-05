@@ -68,6 +68,24 @@ class RiskManagerAgent(BaseAgent):
         if cb_triggered:
             return False, f"Circuit breaker active: {cb_reason}"
 
+        # Resize before the VaR gate: the quantity trade_plan.py hands us is
+        # sized purely off the 2% risk budget / stop distance, with no
+        # awareness of the 5% position cap. For any realistic stop (well
+        # under 40% of price) that quantity is already oversized relative to
+        # the cap, so checking VaR against it first means VaR is evaluating
+        # a size the plan was never going to be allowed to hold. Capping
+        # first means VaR sees the same quantity the plan will actually open.
+        max_qty = calculate_position_size(
+            portfolio_value=portfolio_value,
+            entry_price=plan.entry_price or 0,
+            stop_loss=plan.stop_loss,
+        )
+        if plan.quantity > max_qty * 1.05:
+            plan.quantity = round(max_qty)
+
+        if plan.quantity <= 0:
+            return False, "Position size is zero after applying the position cap"
+
         var_ok, var_reason = check_var_limit(
             portfolio_value,
             candidate_ticker=plan.ticker,
@@ -82,13 +100,5 @@ class RiskManagerAgent(BaseAgent):
         )
         if not allowed:
             return False, reason
-
-        max_qty = calculate_position_size(
-            portfolio_value=portfolio_value,
-            entry_price=plan.entry_price or 0,
-            stop_loss=plan.stop_loss,
-        )
-        if plan.quantity > max_qty * 1.05:
-            plan.quantity = round(max_qty)
 
         return True, "Risk checks passed"

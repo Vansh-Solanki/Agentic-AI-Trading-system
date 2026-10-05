@@ -37,8 +37,16 @@ DB_PATH = os.getenv("DB_PATH", "trading_agent.db")
 
 # ── Risk Parameters ───────────────────────────────────────────────────────────
 MAX_POSITION_SIZE_PCT   = float(os.getenv("MAX_POSITION_SIZE_PCT", "0.05"))   # 5% of portfolio
-MAX_PORTFOLIO_RISK_PCT  = float(os.getenv("MAX_PORTFOLIO_RISK_PCT", "0.02"))  # 2% daily drawdown limit
-MAX_CONCURRENT_TRADES   = int(os.getenv("MAX_CONCURRENT_TRADES", "20"))
+MAX_PORTFOLIO_RISK_PCT  = float(os.getenv("MAX_PORTFOLIO_RISK_PCT", "0.02"))  # 2% per-trade sizing budget
+# Session 52: separate VaR budget from the per-trade risk budget above. Once
+# get_open_trades() correctly counts filled positions, a single 5%-of-portfolio
+# position adds ~$115 of VaR at 1.4% daily vol — a 2% budget (~$2,013 on a
+# $100k account) would exhaust around 17 positions. check_var_limit() uses
+# this; position sizing in trade_plan.py/position_sizing.py still uses
+# MAX_PORTFOLIO_RISK_PCT.
+MAX_VAR_BUDGET_PCT      = float(os.getenv("MAX_VAR_BUDGET_PCT", "0.05"))
+# 20 tickers x 2 lanes — user wants no practical trade-count limit.
+MAX_CONCURRENT_TRADES   = int(os.getenv("MAX_CONCURRENT_TRADES", "40"))
 STOP_LOSS_ATR_MULT      = float(os.getenv("STOP_LOSS_ATR_MULT", "2.0"))
 TAKE_PROFIT_ATR_MULT    = float(os.getenv("TAKE_PROFIT_ATR_MULT", "4.0"))
 
@@ -52,6 +60,46 @@ TAKE_PROFIT_ATR_MULT_LONGTERM = float(os.getenv("TAKE_PROFIT_ATR_MULT_LONGTERM",
 # ── Execution ─────────────────────────────────────────────────────────────────
 PAPER_TRADING                  = os.getenv("PAPER_TRADING", "true").lower() == "true"
 LONGTERM_LOOP_INTERVAL_SECONDS = int(os.getenv("LONGTERM_LOOP_INTERVAL_SECONDS", "1800"))
+
+# Session 52 (Bug 6): entry limit orders are priced this far past the last
+# trade price, in the marketable direction (buy above, sell below), so they
+# have a real chance of filling same-day under DAY tif instead of sitting at
+# the exact last-close price indefinitely.
+ENTRY_LIMIT_BUFFER_PCT     = float(os.getenv("ENTRY_LIMIT_BUFFER_PCT", "0.002"))
+# An entry limit order still open at the broker after this many minutes gets
+# cancelled by the order-sync pass — a stale, un-marketable entry shouldn't
+# sit open for days under what used to be GTC.
+ENTRY_ORDER_TIMEOUT_MINUTES = int(os.getenv("ENTRY_ORDER_TIMEOUT_MINUTES", "10"))
+# If the broker has no record at all of an order this many minutes after we
+# submitted it (a 404 on lookup), the row is presumed lost/never-submitted and
+# marked FAILED. Younger rows are left alone — a 404 right after submission is
+# a normal propagation-delay race, not evidence the order doesn't exist.
+STALE_ORDER_MINUTES         = int(os.getenv("STALE_ORDER_MINUTES", "15"))
+# Fail-closed by default: if the Alpaca client can't be constructed, raise
+# instead of silently continuing in stub mode (which used to fabricate fills).
+# Tests and backtests that genuinely want stub behavior must opt in explicitly.
+ALLOW_STUB_BROKER           = os.getenv("ALLOW_STUB_BROKER", "false").lower() == "true"
+# Hard backstop, independent of ENTRY_ORDER_TIMEOUT_MINUTES: any row still
+# pending/approved/submitted past this age gets handled by order_sync.py's
+# age-cap logic regardless of order type. Entries: same cancel-if-still-open
+# action ENTRY_ORDER_TIMEOUT_MINUTES already triggers much earlier (minutes
+# vs. hours) — this just guarantees a cancel attempt even if that timeout
+# were ever misconfigured away. Exits are never auto-cancelled at any age
+# (would leave the position unprotected) — past this cap they only get a
+# recurring warning logged every sync pass.
+MAX_ORDER_AGE_HOURS         = float(os.getenv("MAX_ORDER_AGE_HOURS", "6"))
+
+# ── Circuit Breakers ──────────────────────────────────────────────────────────
+# Session 52 (circuit breaker repair): thresholds moved out of
+# risk/circuit_breakers.py so they're env-overridable like every other risk
+# setting, rather than hardcoded module constants.
+MAX_DAILY_LOSS_PCT          = float(os.getenv("MAX_DAILY_LOSS_PCT", "0.03"))   # 3% equity move, realized + unrealized
+MAX_CONSECUTIVE_LOSSES      = int(os.getenv("MAX_CONSECUTIVE_LOSSES", "4"))
+# How long a check_circuit_breakers() result is reused before re-querying the
+# broker — each ticker's Phase 2 risk validation calls it once per run_all()
+# cycle, so without a cache a 20-ticker cycle would be 20 Alpaca account
+# calls for a number that can't have meaningfully changed in that span.
+CIRCUIT_BREAKER_CACHE_SECONDS = int(os.getenv("CIRCUIT_BREAKER_CACHE_SECONDS", "30"))
 
 # Session 34: cycle frequency split. The 60s loop only checks SL/TP breaches and
 # reconciles closed trades (both depend on live price, not candle data). The full
@@ -115,6 +163,15 @@ PREMARKET_TICKER_TIMEOUT_SECONDS = int(os.getenv("PREMARKET_TICKER_TIMEOUT_SECON
 #   ticker time budget (previously estimated at ~80s/ticker assuming a 25s
 #   cap) needing to be re-derived against the new 90s cap.
 LLM_TIMEOUT_SECONDS = int(os.getenv("LLM_TIMEOUT_SECONDS", "90"))
+
+# Bug 4: Layer 2's daily-bias result (news/layer2_cache.py) is reused across
+# the premarket batch and both Orchestrator modes' live calls within this
+# window instead of re-fetching/re-scoring/re-calling the LLM for the same
+# question multiple times in one premarket run. 90 minutes comfortably spans
+# the batch -> intraday run_all(premarket_only=True) -> long-term
+# run_all(premarket_only=True) sequence (the Oct 4 log shows all three within
+# ~15 minutes) while still refreshing well within the trading day.
+LAYER2_CACHE_TTL_MINUTES = int(os.getenv("LAYER2_CACHE_TTL_MINUTES", "90"))
 
 # ── Session 45: Technical Agent hybrid LLM escalation ─────────────────────────
 # Deterministic zone boundaries for RSI / Stoch RSI. Outside these bands the

@@ -6,6 +6,13 @@
 *.sqlite
 *.sqlite3
 
+
+*.diff
+*.patch
+*.log
+*.bak
+
+
 # Python
 __pycache__/
 *.py[cod]
@@ -29,3 +36,13 @@ Thumbs.db
 
 # Windows shortcut
 *.lnk
+
+*.log
+*.patch
+*.diff
+*.bak
+
+*.log
+*.patch
+*.diff
+*.bak

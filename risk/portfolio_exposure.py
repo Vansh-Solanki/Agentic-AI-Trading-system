@@ -150,7 +150,7 @@ def check_var_limit(
         cand_var = _candidate_var(candidate_ticker, candidate_qty, candidate_price, confidence)
 
     total_var = existing_var + cand_var
-    risk_budget = portfolio_value * cfg.MAX_PORTFOLIO_RISK_PCT
+    risk_budget = portfolio_value * cfg.MAX_VAR_BUDGET_PCT
     if total_var > risk_budget:
         if cand_var > 0:
             return (

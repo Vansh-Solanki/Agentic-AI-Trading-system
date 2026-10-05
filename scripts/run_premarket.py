@@ -15,11 +15,12 @@ scripts/run_live.py reads the signals/trade plans this script writes.
 import sys
 import os
 import logging
-import warnings
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-warnings.filterwarnings("ignore", category=FutureWarning, message="Calling float on a single element Series")
+# Session 52 (Bug 7) fixed the FutureWarning's cause at the source
+# (data/feeds/price_feed.py's column flattening) — filter removed, confirmed
+# clean under python -W error::FutureWarning.
 
 logging.basicConfig(
     level=logging.INFO,

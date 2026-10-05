@@ -43,7 +43,9 @@ def _layer4_stagger_offset(ticker: str) -> float:
     return zlib.crc32(ticker.encode()) % _LAYER4_INTERVAL_SECONDS
 
 
-def _cached_thesis_signal(ticker: str, thesis_key: str, signal_key: str, layer: int) -> list[Signal]:
+def _cached_thesis_signal(
+    ticker: str, thesis_key: str, signal_key: str, layer: int, degraded: bool = False
+) -> list[Signal]:
     """
     Session 49: Layers 1 (quarterly) and 5 (monthly) now only run live on
     Mondays, via scripts/run_weekly_news.py — both ask slow-moving questions
@@ -60,6 +62,14 @@ def _cached_thesis_signal(ticker: str, thesis_key: str, signal_key: str, layer: 
     the exact keyword-scan collision risk Session 46 removed from the
     free-text layers. Returns [] if either key is missing or malformed (e.g.
     the weekly batch has never run yet for this ticker).
+
+    `degraded`: set when today's live fetch (premarket/intraday) came back
+    with zero articles for this ticker this cycle — either a fetch error or
+    a genuine no-news day. Either way, this cached thesis has no fresh
+    confirmation behind it today, so its confidence is halved rather than
+    reported at full strength, letting DecisionAgent's confidence-weighted
+    scoring naturally down-weight it instead of silently treating stale
+    cache as a live signal.
     """
     thesis_text = get_memory(ticker, "long_term", thesis_key)
     signal_raw = get_memory(ticker, "long_term", signal_key)
@@ -72,6 +82,10 @@ def _cached_thesis_signal(ticker: str, thesis_key: str, signal_key: str, layer: 
     except (json.JSONDecodeError, KeyError, ValueError):
         logger.warning("Cached signal for %s (%s) is malformed — skipping.", ticker, signal_key)
         return []
+    reasoning = f"Cached (last computed Monday): {thesis_text[:150]}"
+    if degraded:
+        conf *= 0.5
+        reasoning += " [degraded: no fresh news this cycle]"
     return [Signal(
         ticker=ticker,
         source=SignalSource.NEWS,
@@ -79,8 +93,8 @@ def _cached_thesis_signal(ticker: str, thesis_key: str, signal_key: str, layer: 
         timeframe=Timeframe.MN1,
         confidence=conf,
         value=parsed.get("value"),
-        reasoning=f"Cached (last computed Monday): {thesis_text[:150]}",
-        metadata={"layer": layer, "cached": True},
+        reasoning=reasoning,
+        metadata={"layer": layer, "cached": True, "degraded": degraded},
     )]
 
 
@@ -91,9 +105,17 @@ class NewsSentimentAgent(BaseAgent):
 
     def run(self, ticker: str, **kwargs) -> AgentOutput:
         signals: list[Signal] = []
+        # True once this cycle has actually tried a live fetch (Finnhub/Benzinga)
+        # for `ticker` and gotten back zero articles — fetch error or genuine
+        # no-news day, we don't distinguish. Used below to flag the cached
+        # thesis signals as degraded instead of letting stale cache pass as
+        # today's confirmation.
+        news_degraded = False
 
         if self.mode == TradingMode.INTRADAY:
             items = fetch_intraday_news([ticker])
+            if not items:
+                news_degraded = True
             spike_signals = run_spike_detector(ticker, items)
             signals.extend(spike_signals)
 
@@ -104,8 +126,19 @@ class NewsSentimentAgent(BaseAgent):
         from agents.orchestrator import _is_market_open
         layer2_ran = not _is_market_open()
         if layer2_ran:
+            # Bug 4 fix: previously judged "degraded" by whether items_out
+            # got populated — but a cache hit (news/layer2_cache.py) leaves
+            # items_out empty by design (nothing was freshly fetched) while
+            # still returning a perfectly good signal, which wrongly halved
+            # the cached quarterly/monthly confidence on every cache hit.
+            # run_premarket_analysis() only ever returns [] when it found no
+            # articles at all (a real fetch failure/no-news day) — reading
+            # degraded from the returned signals themselves is correct in
+            # both the cache-hit and fresh-fetch cases.
             premarket_signals = run_premarket_analysis(ticker)
             signals.extend(premarket_signals)
+            if not premarket_signals:
+                news_degraded = True
 
         # Layer 4 — once per hour per ticker, staggered on first sight so all
         # 20 tickers don't re-synchronize onto the same hourly burst (item 66).
@@ -133,9 +166,13 @@ class NewsSentimentAgent(BaseAgent):
         # whatever Monday cached in stock_memory (see _cached_thesis_signal()
         # above). Mode-scoping unchanged from before: quarterly is read in
         # both modes, monthly only in LONG_TERM.
-        signals.extend(_cached_thesis_signal(ticker, "quarterly_thesis", "quarterly_signal", layer=1))
+        signals.extend(_cached_thesis_signal(
+            ticker, "quarterly_thesis", "quarterly_signal", layer=1, degraded=news_degraded
+        ))
         if self.mode == TradingMode.LONG_TERM:
-            signals.extend(_cached_thesis_signal(ticker, "monthly_thesis", "monthly_signal", layer=5))
+            signals.extend(_cached_thesis_signal(
+                ticker, "monthly_thesis", "monthly_signal", layer=5, degraded=news_degraded
+            ))
 
         layer_parts = []
         if self.mode == TradingMode.INTRADAY:
@@ -144,6 +181,8 @@ class NewsSentimentAgent(BaseAgent):
             layer_parts.append("daily")
         if run_layer4 and not layer2_ran:
             layer_parts.append("weekly")
+        if news_degraded:
+            layer_parts.append("degraded")
         layer_parts.append("cached_quarterly")
         if self.mode == TradingMode.LONG_TERM:
             layer_parts.append("cached_monthly")

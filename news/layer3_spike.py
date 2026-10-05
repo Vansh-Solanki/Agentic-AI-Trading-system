@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timedelta, timezone
 from core.config import LLM_TIMEOUT_SECONDS
 from core.models import Signal, NewsItem
 from core.constants import SignalType, SignalSource, Timeframe
@@ -29,24 +30,52 @@ def _detect_market_event(ticker: str) -> tuple[bool, str]:
     round-trip per ticker per cycle, always — the warm_up() pre-fetch in
     orchestrator.run_all() never got read here. M5's cache TTL (300s) matches
     PIPELINE_CYCLE_SECS, so this is now a cache hit on essentially every call.
+
+    Bug 3 fix, two parts:
+    (1) yfinance's 5-minute data only covers regular hours, so with the
+    market closed the "latest" bar was actually the previous session's
+    final bar, compared against volume/ATR baselines from bars that have
+    nothing to do with "right now" — confirmed firing for 19/20 WATCHLIST
+    tickers in the Oct 4 premarket run. Guarded here (not at the
+    run_spike_detector() call site) so the no-event path there still runs
+    and news items still get saved.
+    (2) Even during market hours, the last bar returned is usually still
+    forming — comparing its partial volume against a full-bar average
+    inflates the ratio every single cycle. Only completed bars (start time
+    + 5min <= now) are used for ATR, the "latest" bar, and the 20-bar
+    average.
     """
+    # Local import: agents.orchestrator imports NewsSentimentAgent at module
+    # level (which imports this module via run_spike_detector), so a
+    # top-level import here would be circular — same pattern already used in
+    # agents/news_sentiment.py for this same function.
+    from agents.orchestrator import _is_market_open
+    if not _is_market_open():
+        logger.debug("Market closed — skipping spike gate for %s", ticker)
+        return False, ""
+
     try:
         df = get_candles(ticker, Timeframe.M5)
     except Exception:
         logger.warning("Could not fetch 5m candles for spike gate on %s", ticker)
         return False, ""
 
-    if df is None or len(df) < 21:
+    if df is None or df.empty:
         return False, ""
 
-    atr = calculate_atr(df)
+    now = datetime.now(timezone.utc)
+    completed = df[df.index + timedelta(minutes=5) <= now]
+    if len(completed) < 21:
+        return False, ""
+
+    atr = calculate_atr(completed)
     if atr is None:
         logger.warning("ATR unavailable for %s — skipping spike gate to avoid false triggers", ticker)
         return False, ""
 
-    latest        = df.iloc[-1]
+    latest        = completed.iloc[-1]
     candle_move   = abs(float(latest["Close"]) - float(latest["Open"]))
-    avg_volume    = float(df["Volume"].iloc[-21:-1].mean())
+    avg_volume    = float(completed["Volume"].iloc[-21:-1].mean())
     current_vol   = float(latest["Volume"])
 
     price_event  = candle_move  > ATR_MOVE_MULTIPLIER  * atr

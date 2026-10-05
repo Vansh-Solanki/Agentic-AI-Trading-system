@@ -68,6 +68,8 @@ def _fetch_ticker_news_benzinga(ticker: str, from_dt: datetime, to_dt: datetime)
 # ── Finnhub fallback ───────────────────────────────────────────────────────────
 
 _FINNHUB_NEWS_URL = "https://finnhub.io/api/v1/company-news"
+_FINNHUB_MAX_ATTEMPTS = 3
+_FINNHUB_RETRY_BASE_SECONDS = 1.5
 
 
 def _fetch_ticker_news_finnhub(ticker: str, from_dt: datetime, to_dt: datetime) -> list[NewsItem]:
@@ -81,13 +83,30 @@ def _fetch_ticker_news_finnhub(ticker: str, from_dt: datetime, to_dt: datetime) 
         "to":     to_dt.strftime("%Y-%m-%d"),
         "token":  FINNHUB_API_KEY,
     }
-    try:
-        with _finnhub_semaphore:
-            resp = requests.get(_FINNHUB_NEWS_URL, params=params, timeout=10)
-        resp.raise_for_status()
-        articles = resp.json()
-    except Exception:
-        logger.exception("Finnhub news request failed for %s", ticker)
+    # Session fix: single-shot requests were treating a transient Finnhub
+    # timeout/5xx the same as "confirmed no news," which fed a 0-article
+    # result straight into cached thesis signals as if it were fresh
+    # confirmation. Retry with backoff before giving up.
+    articles = None
+    for attempt in range(_FINNHUB_MAX_ATTEMPTS):
+        try:
+            with _finnhub_semaphore:
+                resp = requests.get(_FINNHUB_NEWS_URL, params=params, timeout=10)
+            resp.raise_for_status()
+            articles = resp.json()
+            break
+        except Exception:
+            if attempt < _FINNHUB_MAX_ATTEMPTS - 1:
+                logger.warning(
+                    "Finnhub news request failed for %s (attempt %d/%d) — retrying",
+                    ticker, attempt + 1, _FINNHUB_MAX_ATTEMPTS,
+                )
+                time.sleep(_FINNHUB_RETRY_BASE_SECONDS * (2 ** attempt))
+            else:
+                logger.exception(
+                    "Finnhub news request failed for %s after %d attempts", ticker, _FINNHUB_MAX_ATTEMPTS
+                )
+    if articles is None:
         return []
 
     items: list[NewsItem] = []

@@ -1,3 +1,4 @@
+import math
 from core.config import TradingMode
 from core.constants import SignalType, OrderSide, OrderType, RegimeType, Timeframe
 from core.models import AgentOutput, Signal, TradePlan
@@ -33,7 +34,16 @@ class TradePlanAgent(BaseAgent):
         if atr is None:
             return AgentOutput(agent_name=self.name, ticker=ticker, signals=[],
                                summary="ATR unavailable (insufficient data) — cannot size trade plan")
+
         current_price = float(df["Close"].iloc[-1])
+        if current_price != current_price:  # NaN check (today's bar not finalized yet)
+            if len(df) < 2:
+                return AgentOutput(agent_name=self.name, ticker=ticker, signals=[],
+                                   summary="No valid close price — cannot generate trade plan")
+            current_price = float(df["Close"].iloc[-2])
+            if current_price != current_price:  # t-1 also NaN — genuine data problem, stop here
+                return AgentOutput(agent_name=self.name, ticker=ticker, signals=[],
+                                   summary="No valid close price (t and t-1 both NaN) — cannot generate trade plan")
 
         side = OrderSide.BUY if decision.signal_type in (SignalType.BUY, SignalType.STRONG_BUY) else OrderSide.SELL
         if self.mode == TradingMode.INTRADAY:
@@ -69,7 +79,28 @@ class TradePlanAgent(BaseAgent):
         else:
             quantity = atr_quantity
 
+        # Bug 2 fix: neither the ATR sizing above nor the Kelly min ever
+        # applied cfg.MAX_POSITION_SIZE_PCT — RiskManagerAgent.validate_plan()
+        # resizes later, but plans/premarket output showed grossly oversized
+        # quantities in the meantime (e.g. AAPL intraday 1603 shares, ~$535k,
+        # against a 5% cap of ~15 shares on a $100,628.91 portfolio). Applied
+        # here, after the final quantity (ATR sizing + Kelly min) is known,
+        # so the cap is the last word regardless of which sizing path won.
+        max_shares = math.floor(portfolio_value * cfg.MAX_POSITION_SIZE_PCT / current_price) if current_price > 0 else 0
+        if max_shares <= 0:
+            return AgentOutput(
+                agent_name=self.name, ticker=ticker, signals=[],
+                summary=(
+                    f"Position cap is 0 shares at {current_price:.2f} — too expensive for the "
+                    f"{cfg.MAX_POSITION_SIZE_PCT:.0%} cap on a ${portfolio_value:,.0f} portfolio — "
+                    f"cannot generate trade plan"
+                ),
+            )
+        cap_applied = quantity > max_shares
+        quantity = min(quantity, max_shares)
+
         regime_note = f" | size×{size_mult:.1f} (regime={regime})" if size_mult != 1.0 else f" | regime={regime}"
+        cap_note = f" | capped to {cfg.MAX_POSITION_SIZE_PCT:.0%} position cap ({max_shares} sh)" if cap_applied else ""
         plan = TradePlan(
             ticker=ticker,
             side=side,
@@ -79,7 +110,7 @@ class TradePlanAgent(BaseAgent):
             stop_loss=round(stop_loss, 2),
             take_profit=round(take_profit, 2),
             confidence=decision.confidence,
-            reasoning=f"{sizing_note} plan. ATR={atr:.2f}, SL×{sl_mult} TP×{tp_mult}, R:R={target_dist/stop_dist:.1f}:1{regime_note}",
+            reasoning=f"{sizing_note} plan. ATR={atr:.2f}, SL×{sl_mult} TP×{tp_mult}, R:R={target_dist/stop_dist:.1f}:1{regime_note}{cap_note}",
             strategy_mode=self.mode.value,
             metadata={"atr": round(atr, 4)},
         )

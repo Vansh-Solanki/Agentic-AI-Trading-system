@@ -27,16 +27,14 @@ import os
 import time
 import logging
 import threading
-import warnings
 from datetime import time as dtime, datetime
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-# Pandas warns that float(single_element_series) will require .iloc[0] in a
-# future release. Harmless today (still evaluates correctly) and noisy across
-# ~20 call sites — silenced until we do the .iloc[0] cleanup pass.
-warnings.filterwarnings("ignore", category=FutureWarning, message="Calling float on a single element Series")
+# Session 52 (Bug 7) fixed the FutureWarning's cause at the source
+# (data/feeds/price_feed.py's column flattening) — filter removed, confirmed
+# clean under python -W error::FutureWarning.
 
 logging.basicConfig(
     level=logging.INFO,

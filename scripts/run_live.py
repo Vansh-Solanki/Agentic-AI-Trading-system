@@ -34,14 +34,16 @@ import os
 import time
 import logging
 import threading
-import warnings
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-# Pandas warns that float(single_element_series) will require .iloc[0] in a
-# future release. Harmless today (still evaluates correctly) and noisy across
-# ~20 call sites — silenced until we do the .iloc[0] cleanup pass.
-warnings.filterwarnings("ignore", category=FutureWarning, message="Calling float on a single element Series")
+# Session 52 (Bug 7): the FutureWarning this used to silence ("Calling float
+# on a single element Series") came from yfinance's unflattened two-level
+# columns — fixed at the source in data/feeds/price_feed.py
+# (_flatten_yf_columns), confirmed clean under `python -W error::FutureWarning`
+# across D1/H1/H4/M5 candles, calculate_atr, _fetch_vol_and_price,
+# _detect_market_event, and TradePlanAgent. Filter removed rather than left
+# in place with nothing left to catch.
 
 logging.basicConfig(
     level=logging.INFO,

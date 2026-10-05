@@ -116,9 +116,13 @@ def run_premarket_news_fetch(tickers: list[str]) -> None:
 
     total_articles = 0
     for ticker in tickers:
-        if _is_market_open():
-            logger.warning("Market open — aborting remaining pre-market batch tickers.")
-            break
+        # Commented out (2026-09-11): user is intentionally running premarket
+        # during market hours, so this abort guard would stop news fetching
+        # mid-batch. Re-enable by uncommenting if premarket should stay
+        # strictly pre-open again.
+        # if _is_market_open():
+        #     logger.warning("Market open — aborting remaining pre-market batch tickers.")
+        #     break
 
         if is_premarket_checkpoint_complete(ticker, batch_date):
             logger.info("Pre-market news: %s — already completed today, skipping.", ticker)
@@ -149,7 +153,11 @@ def run_premarket_news_fetch(tickers: list[str]) -> None:
         # have added on top).
         items: list[NewsItem] = []
         try:
-            run_premarket_analysis(ticker, llm_timeout=LLM_TIMEOUT_SECONDS, items_out=items)
+            # Bug 4 fix: the batch is the one place that should always do
+            # the real fetch/FinBERT/LLM work and refresh the cache that
+            # agents/news_sentiment.py's live calls read from later the same
+            # day — force_refresh=True skips the cache read unconditionally.
+            run_premarket_analysis(ticker, llm_timeout=LLM_TIMEOUT_SECONDS, items_out=items, force_refresh=True)
         except Exception:
             logger.exception("Pre-market news: %s — Layer 2 fetch/analysis failed", ticker)
         total_articles += len(items)

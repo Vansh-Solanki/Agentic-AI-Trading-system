@@ -2,6 +2,7 @@ import logging
 import threading
 from datetime import datetime, timedelta, timezone
 from typing import Callable
+from zoneinfo import ZoneInfo
 import requests
 import pandas as pd
 from core.config import POLYGON_API_KEY
@@ -126,6 +127,84 @@ _YF_PERIOD: dict[Timeframe, str] = {
 }
 
 
+_NY_TZ = ZoneInfo("America/New_York")
+
+
+def _flatten_yf_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Session 52 (Bug 7): current yfinance versions return a two-level
+    (Price, Ticker) column MultiIndex from yf.download() even for a single
+    ticker. Every downstream consumer (signals/, agents/, risk/, news/)
+    expects a flat Open/High/Low/Close/Volume frame — matching what the
+    Polygon path already returns — so df["Close"] is a plain Series, not a
+    one-column DataFrame. Pure function, no I/O, so it's unit-testable
+    without network access. Deliberately keyed off `isinstance(..., MultiIndex)`
+    rather than yf.download()'s own multi_level_index/group_by kwargs, whose
+    names and defaults have changed across yfinance versions — this works
+    regardless of which version produced the frame.
+    """
+    if isinstance(df.columns, pd.MultiIndex):
+        df = df.copy()
+        df.columns = df.columns.get_level_values(0)
+    return df
+
+
+def _resample_1h_to_4h_session(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Session 52 (Bug 7): yfinance has no native 4-hour interval, so the H4
+    path used to silently request "1h" and return 1-hour bars labeled as
+    4-hour (confirmed live: index spaced exactly one hour apart). This builds
+    real session-aligned 4-hour bars out of 1-hour bars instead of resampling
+    on a fixed UTC clock grid, which would misalign with the exchange session
+    (9:30 AM ET open) and drift across DST transitions.
+
+    Rule: convert to America/New_York, drop NaN-Close rows (a yfinance
+    quirk), then for each local calendar date split into two groups — bars
+    before 13:30 local (group 1: a normal day's 9:30-12:30) and bars at/after
+    13:30 (group 2: 13:30-15:30+). An early-close day with no afternoon bars
+    naturally produces only group 1 for that date. Each group aggregates with
+    the standard OHLCV combine rule (Open=first, High=max, Low=min,
+    Close=last, Volume=sum) and is labeled with its first bar's timestamp.
+
+    The most recent group is kept even if it's still forming (e.g. only one
+    or two of the expected ~4 hourly bars have printed so far) — consistent
+    with how the 5m/15m/1h paths already return their latest, possibly-
+    incomplete bar rather than waiting for it to close.
+
+    The Polygon path (data/feeds/price_feed.py's primary path, not currently
+    in use — no POLYGON_API_KEY is set) requests native 4-hour bars directly
+    from Polygon and is NOT touched by this function; Polygon's own 4-hour
+    bar alignment (likely a fixed UTC/exchange-time grid, not session-half
+    aligned) can differ from what this produces.
+    """
+    if df.empty:
+        return df
+    df = df[df["Close"].notna()]
+    if df.empty:
+        return df
+
+    local_index = df.index.tz_convert(_NY_TZ)
+    is_second_half = (local_index.hour > 13) | ((local_index.hour == 13) & (local_index.minute >= 30))
+
+    df = df.copy()
+    df["_date"] = local_index.date
+    df["_half"] = is_second_half
+
+    rows = []
+    for _, group in df.groupby(["_date", "_half"], sort=True):
+        rows.append({
+            "timestamp": group.index[0],
+            "Open":   group["Open"].iloc[0],
+            "High":   group["High"].max(),
+            "Low":    group["Low"].min(),
+            "Close":  group["Close"].iloc[-1],
+            "Volume": group["Volume"].sum(),
+        })
+    out = pd.DataFrame(rows).set_index("timestamp").sort_index()
+    out.index = pd.to_datetime(out.index, utc=True)
+    return out[["Open", "High", "Low", "Close", "Volume"]]
+
+
 def _reset_yf_crumb() -> None:
     """Force yfinance to re-mint its cookie/crumb.
 
@@ -144,17 +223,27 @@ def _reset_yf_crumb() -> None:
 
 def _yf_fetch_candles(ticker: str, timeframe: Timeframe) -> pd.DataFrame:
     import yfinance as yf
-    interval = _YF_INTERVAL[timeframe]
-    period   = _YF_PERIOD[timeframe]
+    # Session 52 (Bug 7): yfinance has no native 4-hour interval. H4 now
+    # fetches real 1-hour bars and builds session-aligned 4-hour bars from
+    # them (_resample_1h_to_4h_session) instead of returning 1-hour bars
+    # mislabeled as 4-hour.
+    fetch_timeframe = Timeframe.H1 if timeframe == Timeframe.H4 else timeframe
+    interval = _YF_INTERVAL[fetch_timeframe]
+    period   = _YF_PERIOD[fetch_timeframe]
     with _yf_lock:
         df = yf.download(ticker, period=period, interval=interval, progress=False, auto_adjust=True)
+        df = _flatten_yf_columns(df)
         if df.empty:
-            logger.warning("yfinance returned empty for %s @ %s — resetting crumb and retrying", ticker, timeframe.value)
+            logger.warning("yfinance returned empty for %s @ %s — resetting crumb and retrying",
+                            ticker, fetch_timeframe.value)
             _reset_yf_crumb()
             df = yf.download(ticker, period=period, interval=interval, progress=False, auto_adjust=True)
+            df = _flatten_yf_columns(df)
     if df.empty:
         return df
     df.index = pd.to_datetime(df.index, utc=True)
+    if timeframe == Timeframe.H4:
+        df = _resample_1h_to_4h_session(df)
     return df
 
 

@@ -55,17 +55,94 @@ def update_trade_status(trade_id: int, status: str, filled_price: float | None =
         )
 
 
-def get_open_trades(strategy_mode: str | None = None) -> list[dict]:
+def get_trade_by_id(trade_id: int) -> dict | None:
     with get_connection() as conn:
-        if strategy_mode:
-            rows = conn.execute(
-                "SELECT * FROM trade_decisions WHERE status IN ('pending','approved','submitted') AND strategy_mode=?",
-                (strategy_mode,),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM trade_decisions WHERE status IN ('pending','approved','submitted')"
-            ).fetchall()
+        row = conn.execute("SELECT * FROM trade_decisions WHERE id=?", (trade_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def update_order_result(trade_id: int, status: str, filled_price: float | None = None,
+                         filled_at: datetime | None = None, filled_quantity: float | None = None) -> None:
+    """Session 52 (Bug 6): the one place that updates status, filled_price,
+    filled_at, and quantity together after a broker sync — update_trade_status()
+    above never touched quantity, which is how a partial fill used to stay
+    recorded at the full originally-requested size.
+
+    filled_price/filled_at use COALESCE (only overwrite when a real value is
+    given) so a call that only changes quantity — e.g. reducing an entry row
+    after a partially-filled exit dies — doesn't blank out a price/time
+    already recorded by an earlier call.
+
+    On a partial fill (filled_quantity given and different from the row's
+    current quantity), the original requested quantity is preserved under
+    metadata["requested_quantity"] before quantity is overwritten, so it isn't
+    lost once quantity reflects what actually filled.
+    """
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT quantity, metadata FROM trade_decisions WHERE id=?", (trade_id,)
+        ).fetchone()
+        if row is None:
+            return
+        meta = json.loads(row["metadata"]) if row["metadata"] else {}
+        new_quantity = row["quantity"]
+        if filled_quantity is not None and filled_quantity != row["quantity"]:
+            meta.setdefault("requested_quantity", row["quantity"])
+            new_quantity = filled_quantity
+        conn.execute(
+            """UPDATE trade_decisions
+               SET status=?, filled_price=COALESCE(?, filled_price),
+                   filled_at=COALESCE(?, filled_at), quantity=?, metadata=?
+               WHERE id=?""",
+            (status, filled_price, filled_at.isoformat() if filled_at else None,
+             new_quantity, json.dumps(meta), trade_id),
+        )
+
+
+def get_pending_orders() -> list[dict]:
+    """Return every row still in-flight at the broker: status in (pending,
+    approved, submitted), both entries AND exits, both lanes. Used only by
+    execution/order_sync.py to finalize real order state.
+
+    Deliberately different from get_open_trades() (Bug 5's fix), which
+    excludes exit rows because it answers "what positions are open" — this
+    answers "what orders still need their lifecycle resolved," and an
+    in-flight exit order needs that just as much as an in-flight entry.
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM trade_decisions WHERE status IN ('pending','approved','submitted')"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_open_trades(strategy_mode: str | None = None) -> list[dict]:
+    """Return every row that represents an open position or an in-flight order.
+
+    "Open" is two disjoint groups, both required so risk checks see real exposure:
+      - in-flight entries: status in (pending, approved, submitted), including rows
+        whose client_order_id hasn't been assigned yet (NULL) — but never an exit row.
+      - open positions: status='filled' AND client_order_id LIKE 'entry-%'. A filled
+        exit row ("exit-{id}-{mode}") would otherwise double-count the same position
+        it just closed, so it's excluded by requiring the 'entry-%' prefix.
+    `client_order_id IS NULL OR ... NOT LIKE` (not just NOT LIKE) because SQLite's
+    `NULL NOT LIKE x` evaluates to NULL, which silently drops the NULL rows instead
+    of matching them.
+    """
+    query = """
+        SELECT * FROM trade_decisions
+        WHERE (
+            (status IN ('pending','approved','submitted')
+               AND (client_order_id IS NULL OR client_order_id NOT LIKE 'exit-%'))
+            OR (status = 'filled' AND client_order_id LIKE 'entry-%')
+        )
+    """
+    params: tuple = ()
+    if strategy_mode:
+        query += " AND strategy_mode=?"
+        params = (strategy_mode,)
+    with get_connection() as conn:
+        rows = conn.execute(query, params).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -85,6 +162,28 @@ def get_filled_trades(strategy_mode: str | None = None) -> list[dict]:
             rows = conn.execute(
                 "SELECT * FROM trade_decisions WHERE status='filled' AND client_order_id LIKE 'entry-%'"
             ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_closed_entries_since(start_iso: str) -> list[dict]:
+    """Closed entry rows (status='closed', client_order_id LIKE 'entry-%',
+    pnl recorded) closed on or after `start_iso` (a UTC ISO timestamp string,
+    same format as closed_at itself), newest first by closed_at.
+
+    Used by risk/circuit_breakers.py's consecutive-loss-streak check — the
+    original bug filtered on status='filled' (closed trades are 'closed')
+    and iterated a newest-first list with reversed(), both of which this
+    function's contract (status='closed', explicitly newest-first) makes the
+    caller get right by construction rather than by convention.
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            """SELECT * FROM trade_decisions
+               WHERE status='closed' AND client_order_id LIKE 'entry-%'
+                 AND pnl IS NOT NULL AND closed_at >= ?
+               ORDER BY closed_at DESC""",
+            (start_iso,),
+        ).fetchall()
     return [dict(r) for r in rows]
 
 

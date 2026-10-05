@@ -1,0 +1,571 @@
+PS C:\Users\Vansh\Desktop\Trading Agent\scripts> python run_premarket.py
+2026-09-16 01:56:19,417 [INFO] execution.broker.alpaca: Alpaca broker initialized (paper=True)
+2026-09-16 01:56:19,420 [INFO] root: Starting premarket analysis | dual-mode | watchlist=['NVDA', 'MSFT', 'AAPL', 'PLTR', 'JPM', 'GS', 'V', 'LLY', 'UNH', 'ISRG', 'XOM', 'NEE', 'AMZN', 'WMT', 'TSLA', 'CAT', 'BA', 'META', 'GOOGL', 'FCX']
+2026-09-16 01:56:19,449 [INFO] data.storage.db: Database schema initialized at trading_agent.db
+2026-09-16 01:56:19,449 [INFO] root: Pre-warming FinBERT...
+2026-09-16 01:57:05,950 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/agent-harnesses "HTTP/1.1 200 OK"
+2026-09-16 01:57:06,024 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/ProsusAI/finbert/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-09-16 01:57:06,090 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/ProsusAI/finbert/4556d13015211d73dccd3fdd39d39232506f3e43/config.json "HTTP/1.1 200 OK"
+2026-09-16 01:57:06,225 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/ProsusAI/finbert/resolve/main/model.safetensors "HTTP/1.1 404 Not Found"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-09-16 01:57:06,226 [WARNING] huggingface_hub.utils._http: Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-09-16 01:57:06,438 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/ProsusAI/finbert "HTTP/1.1 200 OK"
+2026-09-16 01:57:06,597 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/ProsusAI/finbert/commits/main "HTTP/1.1 200 OK"
+2026-09-16 01:57:06,775 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/ProsusAI/finbert/discussions?p=0 "HTTP/1.1 200 OK"
+2026-09-16 01:57:06,951 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/ProsusAI/finbert/commits/refs%2Fpr%2F29 "HTTP/1.1 200 OK"
+2026-09-16 01:57:07,018 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/ProsusAI/finbert/resolve/refs%2Fpr%2F29/model.safetensors.index.json "HTTP/1.1 404 Not Found"
+2026-09-16 01:57:07,142 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/ProsusAI/finbert/resolve/refs%2Fpr%2F29/model.safetensors "HTTP/1.1 302 Found"
+Loading weights: 100%|█████████████████████████████████████████████████████████████| 201/201 [00:00<00:00, 24400.31it/s]
+2026-09-16 01:57:07,417 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/ProsusAI/finbert/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-09-16 01:57:07,495 [INFO] httpx: HTTP Request: GET https://huggingface.co/api/models/ProsusAI/finbert/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-09-16 01:57:07,622 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/ProsusAI/finbert/resolve/main/processor_config.json "HTTP/1.1 404 Not Found"
+2026-09-16 01:57:07,704 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/ProsusAI/finbert/resolve/main/video_preprocessor_config.json "HTTP/1.1 404 Not Found"
+2026-09-16 01:57:07,768 [INFO] httpx: HTTP Request: HEAD https://huggingface.co/ProsusAI/finbert/resolve/main/preprocessor_config.json "HTTP/1.1 404 Not Found"
+2026-09-16 01:57:07,775 [INFO] news.finbert: FinBERT pipeline loaded
+2026-09-16 01:57:07,776 [INFO] root: FinBERT ready.
+2026-09-16 01:57:07,776 [INFO] root: Warming up LLM backend...
+2026-09-16 01:57:21,176 [INFO] llm.client: Ollama call succeeded — waited 0.0s for slot, call itself took 13.4s (prompt len=33, max_tokens=5)
+2026-09-16 01:57:21,177 [INFO] root: LLM backend warm.
+2026-09-16 01:58:17,747 [INFO] news.news_ingest: Pre-market news batch starting for 20 tickers (batch_date=2026-09-16)...
+2026-09-16 01:58:40,701 [INFO] llm.client: Ollama call succeeded — waited 0.0s for slot, call itself took 15.5s (prompt len=840, max_tokens=512)
+2026-09-16 01:58:40,712 [INFO] news.news_ingest: Pre-market news: NVDA — fundamentals cached, 50 articles ingested, layer 2 done
+2026-09-16 01:59:01,839 [INFO] llm.client: Ollama call succeeded — waited 0.0s for slot, call itself took 13.7s (prompt len=766, max_tokens=512)
+2026-09-16 01:59:01,853 [INFO] news.news_ingest: Pre-market news: MSFT — fundamentals cached, 50 articles ingested, layer 2 done
+2026-09-16 01:59:22,302 [INFO] llm.client: Ollama call succeeded — waited 0.0s for slot, call itself took 15.4s (prompt len=788, max_tokens=512)
+2026-09-16 01:59:22,313 [INFO] news.news_ingest: Pre-market news: AAPL — fundamentals cached, 32 articles ingested, layer 2 done
+2026-09-16 01:59:43,403 [INFO] llm.client: Ollama call succeeded — waited 0.0s for slot, call itself took 17.5s (prompt len=890, max_tokens=512)
+2026-09-16 01:59:43,413 [INFO] news.news_ingest: Pre-market news: PLTR — fundamentals cached, 21 articles ingested, layer 2 done
+2026-09-16 02:00:01,846 [INFO] llm.client: Ollama call succeeded — waited 0.0s for slot, call itself took 14.4s (prompt len=845, max_tokens=512)
+2026-09-16 02:00:01,856 [INFO] news.news_ingest: Pre-market news: JPM — fundamentals cached, 22 articles ingested, layer 2 done
+2026-09-16 02:00:18,552 [INFO] llm.client: Ollama call succeeded — waited 0.0s for slot, call itself took 13.8s (prompt len=869, max_tokens=512)
+2026-09-16 02:00:18,563 [INFO] news.news_ingest: Pre-market news: GS — fundamentals cached, 14 articles ingested, layer 2 done
+2026-09-16 02:00:34,858 [INFO] llm.client: Ollama call succeeded — waited 0.0s for slot, call itself took 14.7s (prompt len=766, max_tokens=512)
+2026-09-16 02:00:34,868 [INFO] news.news_ingest: Pre-market news: V — fundamentals cached, 5 articles ingested, layer 2 done
+2026-09-16 02:00:56,586 [INFO] llm.client: Ollama call succeeded — waited 0.0s for slot, call itself took 17.2s (prompt len=825, max_tokens=512)
+2026-09-16 02:00:56,596 [INFO] news.news_ingest: Pre-market news: LLY — fundamentals cached, 29 articles ingested, layer 2 done
+2026-09-16 02:01:14,767 [INFO] llm.client: Ollama call succeeded — waited 0.0s for slot, call itself took 15.8s (prompt len=874, max_tokens=512)
+2026-09-16 02:01:14,782 [INFO] news.news_ingest: Pre-market news: UNH — fundamentals cached, 10 articles ingested, layer 2 done
+2026-09-16 02:01:16,045 [INFO] data.feeds.fundamentals_feed: [ISRG] D/E filled via Finnhub fallback
+2026-09-16 02:01:29,562 [INFO] llm.client: Ollama call succeeded — waited 0.0s for slot, call itself took 12.5s (prompt len=697, max_tokens=512)
+2026-09-16 02:01:29,574 [INFO] news.news_ingest: Pre-market news: ISRG — fundamentals cached, 3 articles ingested, layer 2 done
+2026-09-16 02:01:47,032 [INFO] llm.client: Ollama call succeeded — waited 0.0s for slot, call itself took 15.0s (prompt len=846, max_tokens=512)
+2026-09-16 02:01:47,043 [INFO] news.news_ingest: Pre-market news: XOM — fundamentals cached, 12 articles ingested, layer 2 done
+2026-09-16 02:02:02,742 [INFO] llm.client: Ollama call succeeded — waited 0.0s for slot, call itself took 14.4s (prompt len=652, max_tokens=512)
+2026-09-16 02:02:02,751 [INFO] news.news_ingest: Pre-market news: NEE — fundamentals cached, 3 articles ingested, layer 2 done
+2026-09-16 02:02:23,583 [INFO] llm.client: Ollama call succeeded — waited 0.0s for slot, call itself took 14.1s (prompt len=924, max_tokens=512)
+2026-09-16 02:02:23,594 [INFO] news.news_ingest: Pre-market news: AMZN — fundamentals cached, 50 articles ingested, layer 2 done
+2026-09-16 02:02:42,512 [INFO] llm.client: Ollama call succeeded — waited 0.0s for slot, call itself took 15.5s (prompt len=792, max_tokens=512)
+2026-09-16 02:02:42,523 [INFO] news.news_ingest: Pre-market news: WMT — fundamentals cached, 20 articles ingested, layer 2 done
+2026-09-16 02:03:04,418 [INFO] llm.client: Ollama call succeeded — waited 0.0s for slot, call itself took 15.6s (prompt len=1000, max_tokens=512)
+2026-09-16 02:03:04,430 [INFO] news.news_ingest: Pre-market news: TSLA — fundamentals cached, 44 articles ingested, layer 2 done
+2026-09-16 02:03:19,861 [INFO] llm.client: Ollama call succeeded — waited 0.0s for slot, call itself took 13.5s (prompt len=826, max_tokens=512)
+2026-09-16 02:03:19,872 [INFO] news.news_ingest: Pre-market news: CAT — fundamentals cached, 7 articles ingested, layer 2 done
+2026-09-16 02:03:38,203 [INFO] llm.client: Ollama call succeeded — waited 0.0s for slot, call itself took 14.8s (prompt len=834, max_tokens=512)
+2026-09-16 02:03:38,216 [INFO] news.news_ingest: Pre-market news: BA — fundamentals cached, 19 articles ingested, layer 2 done
+2026-09-16 02:03:59,434 [INFO] llm.client: Ollama call succeeded — waited 0.0s for slot, call itself took 14.5s (prompt len=809, max_tokens=512)
+2026-09-16 02:03:59,447 [INFO] news.news_ingest: Pre-market news: META — fundamentals cached, 50 articles ingested, layer 2 done
+2026-09-16 02:04:24,220 [INFO] llm.client: Ollama call succeeded — waited 0.0s for slot, call itself took 17.5s (prompt len=795, max_tokens=512)
+2026-09-16 02:04:24,230 [INFO] news.news_ingest: Pre-market news: GOOGL — fundamentals cached, 50 articles ingested, layer 2 done
+2026-09-16 02:04:37,636 [INFO] llm.client: Ollama call succeeded — waited 0.0s for slot, call itself took 12.5s (prompt len=533, max_tokens=512)
+2026-09-16 02:04:37,648 [INFO] news.news_ingest: Pre-market news: FCX — fundamentals cached, 1 articles ingested, layer 2 done
+2026-09-16 02:04:37,648 [INFO] news.news_ingest: Pre-market news batch complete: 492 articles across 20 tickers
+2026-09-16 02:04:37,650 [INFO] execution.broker.alpaca: Alpaca broker initialized (paper=True)
+2026-09-16 02:04:38,289 [INFO] root: Initial portfolio value: $100136.19
+2026-09-16 02:04:38,291 [INFO] execution.broker.alpaca: Alpaca broker initialized (paper=True)
+2026-09-16 02:04:38,845 [INFO] execution.broker.alpaca: Alpaca broker initialized (paper=True)
+2026-09-16 02:04:39,411 [INFO] agents.orchestrator: Portfolio value refreshed: $100136.19
+2026-09-16 02:04:48,486 [INFO] agents.orchestrator: === Running pipeline for NVDA [intraday] ===
+2026-09-16 02:04:48,487 [INFO] agents.orchestrator: === Running pipeline for MSFT [intraday] ===
+2026-09-16 02:04:48,488 [INFO] agents.orchestrator: === Running pipeline for AAPL [intraday] ===
+2026-09-16 02:04:48,514 [INFO] agents.orchestrator: === Running pipeline for PLTR [intraday] ===
+2026-09-16 02:04:48,517 [INFO] agents.orchestrator: === Running pipeline for JPM [intraday] ===
+2026-09-16 02:04:48,526 [INFO] MemoryAgent: [MSFT] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:04:48,547 [INFO] FundamentalAgent: [MSFT] FundamentalAgent — 3 signals | P/E=28.16544, P/B=8.34584, RevGrowth=0.177, EarnGrowth=0.317, D/E=0.29118
+2026-09-16 02:04:48,548 [INFO] MemoryAgent: [JPM] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:04:48,558 [INFO] MemoryAgent: [AAPL] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:04:48,565 [INFO] MemoryAgent: [NVDA] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:04:48,567 [INFO] FundamentalAgent: [JPM] FundamentalAgent — 2 signals | P/E=15.095931, P/B=2.650161, RevGrowth=0.304, EarnGrowth=0.469, D/E=1.379496631147948
+2026-09-16 02:04:48,568 [INFO] FundamentalAgent: [AAPL] FundamentalAgent — 2 signals | P/E=38.17281, P/B=45.01902, RevGrowth=0.164, EarnGrowth=0.287, D/E=0.78445
+2026-09-16 02:04:48,582 [INFO] MemoryAgent: [PLTR] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:04:48,585 [INFO] FundamentalAgent: [NVDA] FundamentalAgent — 4 signals | P/E=26.654522, P/B=22.373722, RevGrowth=1.059, EarnGrowth=1.278, D/E=0.16971
+2026-09-16 02:04:48,594 [INFO] FundamentalAgent: [PLTR] FundamentalAgent — 5 signals | P/E=147.48718, P/B=42.41888, RevGrowth=0.928, EarnGrowth=2.154, D/E=0.02139
+2026-09-16 02:04:48,690 [INFO] TechnicalAgent: [NVDA] TechnicalAgent — 11 signals | 11 signals — 2 bullish / 7 bearish | avg confidence 0.64
+2026-09-16 02:04:49,210 [INFO] news.layer3_spike: Spike gate triggered for MSFT: volume 891530 > 2.0x avg 134979
+2026-09-16 02:04:49,247 [INFO] news.layer3_spike: Spike gate triggered for JPM: volume 979318 > 2.0x avg 214024
+2026-09-16 02:04:50,099 [INFO] news.layer3_spike: Spike gate triggered for AAPL: volume 2009774 > 2.0x avg 244383
+2026-09-16 02:04:50,100 [INFO] news.layer3_spike: Spike gate triggered for NVDA: volume 2747430 > 2.0x avg 516436
+2026-09-16 02:04:50,240 [INFO] MarketRegimeAgent: [NVDA] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:04:50,451 [INFO] MarketRegimeAgent: [MSFT] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:04:50,684 [INFO] MarketRegimeAgent: [AAPL] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:04:50,860 [INFO] news.layer3_spike: Spike gate triggered for PLTR: volume 973741 > 2.0x avg 268428
+2026-09-16 02:04:50,988 [INFO] MarketRegimeAgent: [JPM] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:04:51,319 [INFO] MarketRegimeAgent: [PLTR] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:04:57,183 [INFO] llm.client: Ollama call succeeded — waited 0.0s for slot, call itself took 8.6s (prompt len=606, max_tokens=32)
+2026-09-16 02:04:57,268 [INFO] TechnicalAgent: [MSFT] TechnicalAgent — 11 signals | 11 signals — 4 bullish / 5 bearish | avg confidence 0.64
+2026-09-16 02:05:09,371 [INFO] llm.client: Ollama call succeeded — waited 8.5s for slot, call itself took 12.2s (prompt len=779, max_tokens=64)
+2026-09-16 02:05:09,467 [INFO] TechnicalAgent: [AAPL] TechnicalAgent — 12 signals | 12 signals — 8 bullish / 2 bearish | avg confidence 0.60
+2026-09-16 02:05:23,126 [INFO] llm.client: Ollama call succeeded — waited 20.7s for slot, call itself took 13.8s (prompt len=957, max_tokens=96)
+2026-09-16 02:05:23,215 [INFO] TechnicalAgent: [PLTR] TechnicalAgent — 8 signals | 8 signals — 4 bullish / 2 bearish | avg confidence 0.67
+2026-09-16 02:05:36,767 [INFO] llm.client: Ollama call succeeded — waited 34.5s for slot, call itself took 13.6s (prompt len=956, max_tokens=96)
+2026-09-16 02:05:36,847 [INFO] TechnicalAgent: [JPM] TechnicalAgent — 12 signals | 12 signals — 7 bullish / 2 bearish | avg confidence 0.68
+2026-09-16 02:05:54,859 [INFO] llm.client: Ollama call succeeded — waited 46.4s for slot, call itself took 18.1s (prompt len=483, max_tokens=512)
+2026-09-16 02:06:08,492 [INFO] llm.client: Ollama call succeeded — waited 63.6s for slot, call itself took 13.6s (prompt len=462, max_tokens=512)
+2026-09-16 02:06:21,850 [INFO] llm.client: Ollama call succeeded — waited 77.0s for slot, call itself took 13.4s (prompt len=474, max_tokens=512)
+2026-09-16 02:06:34,364 [INFO] llm.client: Ollama call succeeded — waited 78.7s for slot, call itself took 12.5s (prompt len=845, max_tokens=512)
+2026-09-16 02:06:34,377 [INFO] NewsSentimentAgent: [JPM] NewsSentimentAgent — 2 signals | 2 news-driven signals for JPM (spike+daily+cached_quarterly)
+2026-09-16 02:06:34,933 [INFO] RiskManagerAgent: [JPM] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:06:35,099 [INFO] DecisionAgent: [JPM] DecisionAgent — 1 signals | Composite score 0.227 → buy [regime=ranging]
+2026-09-16 02:06:35,114 [INFO] TradePlanAgent: [JPM] TradePlanAgent — 0 signals | BUY 736 JPM @ 353.33 | SL 350.61 | TP 357.87
+2026-09-16 02:06:35,114 [INFO] agents.orchestrator: [JPM] premarket_only — skipping critic.
+2026-09-16 02:06:35,114 [INFO] agents.orchestrator: === Running pipeline for GS [intraday] ===
+2026-09-16 02:06:35,120 [INFO] MarketRegimeAgent: [GS] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:06:35,124 [INFO] MemoryAgent: [GS] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:06:35,128 [INFO] FundamentalAgent: [GS] FundamentalAgent — 3 signals | P/E=15.267625, P/B=2.6976182, RevGrowth=0.425, EarnGrowth=0.923, D/E=7.25381
+2026-09-16 02:06:35,676 [INFO] news.layer3_spike: Spike gate triggered for GS: volume 130254 > 2.0x avg 33182
+2026-09-16 02:06:45,656 [INFO] llm.client: Ollama call succeeded — waited 84.1s for slot, call itself took 11.3s (prompt len=766, max_tokens=512)
+2026-09-16 02:06:45,668 [INFO] NewsSentimentAgent: [MSFT] NewsSentimentAgent — 2 signals | 2 news-driven signals for MSFT (spike+daily+cached_quarterly)
+2026-09-16 02:06:45,727 [INFO] RiskManagerAgent: [MSFT] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:06:45,883 [INFO] DecisionAgent: [MSFT] DecisionAgent — 1 signals | Composite score 0.021 → neutral [regime=ranging]
+2026-09-16 02:06:45,883 [INFO] agents.orchestrator: [MSFT] No actionable signal (neutral) — skipping trade plan
+2026-09-16 02:06:45,883 [INFO] agents.orchestrator: === Running pipeline for V [intraday] ===
+2026-09-16 02:06:45,886 [INFO] MarketRegimeAgent: [V] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:06:45,890 [INFO] MemoryAgent: [V] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:06:45,901 [INFO] FundamentalAgent: [V] FundamentalAgent — 1 signals | P/E=31.940475, P/B=19.90567, RevGrowth=0.144, EarnGrowth=0.102, D/E=0.67821
+2026-09-16 02:06:46,442 [INFO] news.layer3_spike: Spike gate triggered for V: price move 0.86 > 1.5x ATR 0.52 + volume 377221 > 2.0x avg 46006
+2026-09-16 02:06:56,335 [INFO] llm.client: Ollama call succeeded — waited 42.1s for slot, call itself took 10.7s (prompt len=788, max_tokens=512)
+2026-09-16 02:06:56,347 [INFO] NewsSentimentAgent: [AAPL] NewsSentimentAgent — 3 signals | 3 news-driven signals for AAPL (spike+daily+cached_quarterly)
+2026-09-16 02:06:56,404 [INFO] RiskManagerAgent: [AAPL] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:06:56,568 [INFO] DecisionAgent: [AAPL] DecisionAgent — 1 signals | Composite score 0.208 → buy [regime=ranging]
+2026-09-16 02:06:56,580 [INFO] TradePlanAgent: [AAPL] TradePlanAgent — 0 signals | BUY 1632 AAPL @ 331.33 | SL 330.11 | TP 333.38
+2026-09-16 02:06:56,580 [INFO] agents.orchestrator: [AAPL] premarket_only — skipping critic.
+2026-09-16 02:06:56,581 [INFO] agents.orchestrator: === Running pipeline for LLY [intraday] ===
+2026-09-16 02:06:56,586 [INFO] MarketRegimeAgent: [LLY] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:06:56,591 [INFO] MemoryAgent: [LLY] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:06:56,596 [INFO] FundamentalAgent: [LLY] FundamentalAgent — 4 signals | P/E=38.162914, P/B=29.896059, RevGrowth=0.477, EarnGrowth=0.262, D/E=1.6207099999999999
+2026-09-16 02:06:57,187 [INFO] news.layer3_spike: Spike gate triggered for LLY: price move 2.54 > 1.5x ATR 1.64 + volume 125118 > 2.0x avg 12732
+2026-09-16 02:07:11,290 [INFO] llm.client: Ollama call succeeded — waited 47.3s for slot, call itself took 15.0s (prompt len=487, max_tokens=512)
+2026-09-16 02:07:22,975 [INFO] llm.client: Ollama call succeeded — waited 43.5s for slot, call itself took 11.7s (prompt len=890, max_tokens=512)
+2026-09-16 02:07:22,986 [INFO] NewsSentimentAgent: [PLTR] NewsSentimentAgent — 3 signals | 3 news-driven signals for PLTR (spike+daily+cached_quarterly)
+2026-09-16 02:07:23,058 [INFO] RiskManagerAgent: [PLTR] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:07:23,219 [INFO] DecisionAgent: [PLTR] DecisionAgent — 1 signals | Composite score 0.193 → buy [regime=ranging]
+2026-09-16 02:07:23,230 [INFO] TradePlanAgent: [PLTR] TradePlanAgent — 0 signals | BUY 1149 PLTR @ 172.56 | SL 170.82 | TP 175.47
+2026-09-16 02:07:23,231 [INFO] agents.orchestrator: [PLTR] premarket_only — skipping critic.
+2026-09-16 02:07:23,231 [INFO] agents.orchestrator: === Running pipeline for UNH [intraday] ===
+2026-09-16 02:07:23,236 [INFO] MarketRegimeAgent: [UNH] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:07:23,241 [INFO] MemoryAgent: [UNH] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:07:23,243 [INFO] FundamentalAgent: [UNH] FundamentalAgent — 1 signals | P/E=24.634993, P/B=3.4558425, RevGrowth=0.004, EarnGrowth=0.615, D/E=0.69211
+2026-09-16 02:07:23,794 [INFO] news.layer3_spike: Spike gate triggered for UNH: price move 0.88 > 1.5x ATR 0.53 + volume 327445 > 2.0x avg 43250
+2026-09-16 02:07:36,502 [INFO] llm.client: Ollama call succeeded — waited 47.8s for slot, call itself took 13.5s (prompt len=956, max_tokens=96)
+2026-09-16 02:07:36,586 [INFO] TechnicalAgent: [GS] TechnicalAgent — 10 signals | 10 signals — 3 bullish / 5 bearish | avg confidence 0.67
+2026-09-16 02:07:47,365 [INFO] llm.client: Ollama call succeeded — waited 56.0s for slot, call itself took 10.9s (prompt len=869, max_tokens=512)
+2026-09-16 02:07:47,376 [INFO] NewsSentimentAgent: [GS] NewsSentimentAgent — 2 signals | 2 news-driven signals for GS (spike+daily+cached_quarterly)
+2026-09-16 02:07:47,441 [INFO] RiskManagerAgent: [GS] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:07:47,584 [INFO] DecisionAgent: [GS] DecisionAgent — 1 signals | Composite score -0.049 → neutral [regime=ranging]
+2026-09-16 02:07:47,584 [INFO] agents.orchestrator: [GS] No actionable signal (neutral) — skipping trade plan
+2026-09-16 02:07:47,584 [INFO] agents.orchestrator: === Running pipeline for ISRG [intraday] ===
+2026-09-16 02:07:47,588 [INFO] MarketRegimeAgent: [ISRG] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:07:47,591 [INFO] MemoryAgent: [ISRG] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:07:47,602 [INFO] FundamentalAgent: [ISRG] FundamentalAgent — 4 signals | P/E=43.301952, P/B=7.346605, RevGrowth=0.185, EarnGrowth=0.265, D/E=0.0
+2026-09-16 02:07:48,169 [INFO] news.layer3_spike: Spike gate triggered for ISRG: volume 205417 > 2.0x avg 19672
+2026-09-16 02:07:58,546 [INFO] llm.client: Ollama call succeeded — waited 61.5s for slot, call itself took 11.2s (prompt len=799, max_tokens=64)
+2026-09-16 02:07:58,623 [INFO] TechnicalAgent: [V] TechnicalAgent — 6 signals | 6 signals — 4 bullish / 0 bearish | avg confidence 0.66
+2026-09-16 02:08:08,550 [INFO] llm.client: Ollama call succeeded — waited 69.7s for slot, call itself took 10.0s (prompt len=766, max_tokens=512)
+2026-09-16 02:08:08,560 [INFO] NewsSentimentAgent: [V] NewsSentimentAgent — 2 signals | 2 news-driven signals for V (spike+daily+cached_quarterly)
+2026-09-16 02:08:08,614 [INFO] RiskManagerAgent: [V] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:08:08,705 [INFO] DecisionAgent: [V] DecisionAgent — 1 signals | Composite score 0.333 → buy [regime=ranging]
+2026-09-16 02:08:08,719 [INFO] TradePlanAgent: [V] TradePlanAgent — 0 signals | BUY 1610 V @ 375.70 | SL 374.46 | TP 377.77
+2026-09-16 02:08:08,719 [INFO] agents.orchestrator: [V] premarket_only — skipping critic.
+2026-09-16 02:08:08,719 [INFO] agents.orchestrator: === Running pipeline for XOM [intraday] ===
+2026-09-16 02:08:08,724 [INFO] MarketRegimeAgent: [XOM] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:08:08,728 [INFO] MemoryAgent: [XOM] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:08:08,732 [INFO] FundamentalAgent: [XOM] FundamentalAgent — 3 signals | P/E=21.244669, P/B=2.6842105, RevGrowth=0.441, EarnGrowth=1.128, D/E=0.15921
+2026-09-16 02:08:09,294 [INFO] news.layer3_spike: Spike gate triggered for XOM: price move 0.42 > 1.5x ATR 0.26 + volume 697713 > 2.0x avg 126031
+2026-09-16 02:08:19,632 [INFO] llm.client: Ollama call succeeded — waited 71.9s for slot, call itself took 11.1s (prompt len=804, max_tokens=64)
+2026-09-16 02:08:19,708 [INFO] TechnicalAgent: [LLY] TechnicalAgent — 9 signals | 9 signals — 3 bullish / 4 bearish | avg confidence 0.64
+2026-09-16 02:08:33,911 [INFO] llm.client: Ollama call succeeded — waited 82.3s for slot, call itself took 14.3s (prompt len=498, max_tokens=512)
+2026-09-16 02:08:50,276 [ERROR] agents.orchestrator: [NVDA] Phase 1 agent 'news' timed out — using empty output
+2026-09-16 02:08:50,361 [INFO] RiskManagerAgent: [NVDA] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:08:50,609 [INFO] DecisionAgent: [NVDA] DecisionAgent — 1 signals | Composite score -0.143 → neutral [regime=ranging]
+2026-09-16 02:08:50,610 [INFO] agents.orchestrator: [NVDA] No actionable signal (neutral) — skipping trade plan
+2026-09-16 02:08:50,611 [INFO] agents.orchestrator: === Running pipeline for NEE [intraday] ===
+2026-09-16 02:08:50,620 [INFO] MarketRegimeAgent: [NEE] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:08:50,638 [INFO] MemoryAgent: [NEE] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:08:50,661 [INFO] FundamentalAgent: [NEE] FundamentalAgent — 2 signals | P/E=18.341629, P/B=2.9600554, RevGrowth=0.124, EarnGrowth=0.531, D/E=1.61676
+2026-09-16 02:08:50,776 [INFO] TechnicalAgent: [NEE] TechnicalAgent — 14 signals | 14 signals — 5 bullish / 7 bearish | avg confidence 0.66
+2026-09-16 02:08:51,339 [INFO] news.layer3_spike: Spike gate triggered for NEE: volume 725117 > 2.0x avg 111776
+2026-09-16 02:08:53,001 [INFO] llm.client: Ollama call succeeded — waited 82.5s for slot, call itself took 19.1s (prompt len=475, max_tokens=512)
+2026-09-16 02:09:03,411 [INFO] llm.client: Ollama call succeeded — waited 89.7s for slot, call itself took 10.4s (prompt len=778, max_tokens=64)
+2026-09-16 02:09:03,486 [INFO] TechnicalAgent: [UNH] TechnicalAgent — 9 signals | 9 signals — 0 bullish / 7 bearish | avg confidence 0.63
+2026-09-16 02:09:15,459 [INFO] llm.client: Ollama call succeeded — waited 96.4s for slot, call itself took 12.0s (prompt len=874, max_tokens=512)
+2026-09-16 02:09:15,472 [INFO] NewsSentimentAgent: [UNH] NewsSentimentAgent — 2 signals | 2 news-driven signals for UNH (spike+daily+cached_quarterly)
+2026-09-16 02:09:15,537 [INFO] RiskManagerAgent: [UNH] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:09:15,656 [INFO] DecisionAgent: [UNH] DecisionAgent — 1 signals | Composite score -0.450 → sell [regime=ranging]
+2026-09-16 02:09:15,665 [INFO] execution.broker.alpaca: Alpaca broker initialized (paper=True)
+2026-09-16 02:09:16,240 [INFO] TradePlanAgent: [UNH] TradePlanAgent — 0 signals | SELL 1301 UNH @ 375.90 | SL 377.44 | TP 373.33
+2026-09-16 02:09:16,240 [INFO] agents.orchestrator: [UNH] premarket_only — skipping critic.
+2026-09-16 02:09:16,241 [INFO] agents.orchestrator: === Running pipeline for AMZN [intraday] ===
+2026-09-16 02:09:16,246 [INFO] MarketRegimeAgent: [AMZN] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:09:16,250 [INFO] MemoryAgent: [AMZN] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:09:16,273 [INFO] FundamentalAgent: [AMZN] FundamentalAgent — 1 signals | P/E=20.412489, P/B=4.8561263, RevGrowth=0.196, EarnGrowth=2.423, D/E=0.45616999999999996
+2026-09-16 02:09:16,816 [INFO] news.layer3_spike: Spike gate triggered for AMZN: volume 3049921 > 2.0x avg 335118
+2026-09-16 02:09:26,440 [INFO] llm.client: Ollama call succeeded — waited 87.8s for slot, call itself took 11.0s (prompt len=802, max_tokens=64)
+2026-09-16 02:09:26,522 [INFO] TechnicalAgent: [ISRG] TechnicalAgent — 8 signals | 8 signals — 6 bullish / 0 bearish | avg confidence 0.66
+2026-09-16 02:09:37,324 [INFO] llm.client: Ollama call succeeded — waited 96.3s for slot, call itself took 10.9s (prompt len=697, max_tokens=512)
+2026-09-16 02:09:37,334 [INFO] NewsSentimentAgent: [ISRG] NewsSentimentAgent — 2 signals | 2 news-driven signals for ISRG (spike+daily+cached_quarterly)
+2026-09-16 02:09:37,402 [INFO] RiskManagerAgent: [ISRG] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:09:37,537 [INFO] DecisionAgent: [ISRG] DecisionAgent — 1 signals | Composite score 0.477 → buy [regime=ranging]
+2026-09-16 02:09:37,550 [INFO] TradePlanAgent: [ISRG] TradePlanAgent — 0 signals | BUY 946 ISRG @ 377.35 | SL 375.23 | TP 380.88
+2026-09-16 02:09:37,550 [INFO] agents.orchestrator: [ISRG] premarket_only — skipping critic.
+2026-09-16 02:09:37,551 [INFO] agents.orchestrator: === Running pipeline for WMT [intraday] ===
+2026-09-16 02:09:37,557 [INFO] MarketRegimeAgent: [WMT] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:09:37,559 [INFO] MemoryAgent: [WMT] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:09:37,563 [INFO] FundamentalAgent: [WMT] FundamentalAgent — 2 signals | P/E=39.593407, P/B=9.123058, RevGrowth=0.059, EarnGrowth=-0.091, D/E=0.7165300000000001
+2026-09-16 02:09:38,145 [INFO] news.layer3_spike: Spike gate triggered for WMT: volume 1126837 > 2.0x avg 176500
+2026-09-16 02:09:44,303 [INFO] llm.client: Ollama call succeeded — waited 88.6s for slot, call itself took 7.0s (prompt len=605, max_tokens=32)
+2026-09-16 02:09:44,790 [INFO] TechnicalAgent: [XOM] TechnicalAgent — 10 signals | 10 signals — 7 bullish / 1 bearish | avg confidence 0.67
+2026-09-16 02:09:59,842 [INFO] llm.client: Ollama call succeeded — waited 94.8s for slot, call itself took 15.5s (prompt len=491, max_tokens=512)
+2026-09-16 02:10:11,321 [INFO] llm.client: Ollama call succeeded — waited 78.6s for slot, call itself took 11.5s (prompt len=825, max_tokens=512)
+2026-09-16 02:10:11,334 [INFO] NewsSentimentAgent: [LLY] NewsSentimentAgent — 3 signals | 3 news-driven signals for LLY (spike+daily+cached_quarterly)
+2026-09-16 02:10:11,394 [INFO] RiskManagerAgent: [LLY] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:10:11,548 [INFO] DecisionAgent: [LLY] DecisionAgent — 1 signals | Composite score -0.021 → neutral [regime=ranging]
+2026-09-16 02:10:11,548 [INFO] agents.orchestrator: [LLY] No actionable signal (neutral) — skipping trade plan
+2026-09-16 02:10:11,548 [INFO] agents.orchestrator: === Running pipeline for TSLA [intraday] ===
+2026-09-16 02:10:11,551 [INFO] MarketRegimeAgent: [TSLA] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:10:11,556 [INFO] MemoryAgent: [TSLA] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:10:11,567 [INFO] FundamentalAgent: [TSLA] FundamentalAgent — 4 signals | P/E=333.25232, P/B=16.211864, RevGrowth=0.255, EarnGrowth=-0.03, D/E=0.18373
+2026-09-16 02:10:12,577 [INFO] news.layer3_spike: Spike gate triggered for TSLA: volume 1031277 > 2.0x avg 221263
+2026-09-16 02:10:31,162 [INFO] llm.client: Ollama call succeeded — waited 79.6s for slot, call itself took 19.8s (prompt len=458, max_tokens=512)
+2026-09-16 02:10:40,768 [INFO] llm.client: Ollama call succeeded — waited 97.9s for slot, call itself took 9.6s (prompt len=448, max_tokens=512)
+2026-09-16 02:10:47,676 [INFO] llm.client: Ollama call succeeded — waited 84.5s for slot, call itself took 6.9s (prompt len=606, max_tokens=32)
+2026-09-16 02:10:48,074 [INFO] TechnicalAgent: [AMZN] TechnicalAgent — 8 signals | 8 signals — 2 bullish / 4 bearish | avg confidence 0.67
+2026-09-16 02:11:02,245 [INFO] llm.client: Ollama call succeeded — waited 90.6s for slot, call itself took 14.6s (prompt len=479, max_tokens=512)
+2026-09-16 02:11:14,766 [INFO] llm.client: Ollama call succeeded — waited 84.7s for slot, call itself took 12.5s (prompt len=778, max_tokens=64)
+2026-09-16 02:11:15,187 [INFO] TechnicalAgent: [WMT] TechnicalAgent — 11 signals | 11 signals — 3 bullish / 5 bearish | avg confidence 0.62
+2026-09-16 02:11:28,789 [INFO] llm.client: Ollama call succeeded — waited 96.5s for slot, call itself took 14.0s (prompt len=460, max_tokens=512)
+2026-09-16 02:11:39,167 [INFO] llm.client: Ollama call succeeded — waited 85.5s for slot, call itself took 10.4s (prompt len=846, max_tokens=512)
+2026-09-16 02:11:39,178 [INFO] NewsSentimentAgent: [XOM] NewsSentimentAgent — 3 signals | 3 news-driven signals for XOM (spike+daily+cached_quarterly)
+2026-09-16 02:11:39,780 [INFO] RiskManagerAgent: [XOM] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:11:39,931 [INFO] DecisionAgent: [XOM] DecisionAgent — 1 signals | Composite score 0.530 → strong_buy [regime=ranging]
+2026-09-16 02:11:39,936 [INFO] TradePlanAgent: [XOM] TradePlanAgent — 0 signals | BUY 2378 XOM @ 169.29 | SL 168.45 | TP 170.69
+2026-09-16 02:11:39,937 [INFO] agents.orchestrator: [XOM] premarket_only — skipping critic.
+2026-09-16 02:11:39,937 [INFO] agents.orchestrator: === Running pipeline for CAT [intraday] ===
+2026-09-16 02:11:39,942 [INFO] MarketRegimeAgent: [CAT] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:11:39,947 [INFO] MemoryAgent: [CAT] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:11:39,951 [INFO] FundamentalAgent: [CAT] FundamentalAgent — 4 signals | P/E=33.787838, P/B=18.570377, RevGrowth=0.24, EarnGrowth=0.682, D/E=2.32783
+2026-09-16 02:11:41,011 [INFO] news.layer3_spike: Spike gate triggered for CAT: volume 390513 > 2.0x avg 14945
+2026-09-16 02:11:49,833 [INFO] llm.client: Ollama call succeeded — waited 87.6s for slot, call itself took 10.7s (prompt len=608, max_tokens=32)
+2026-09-16 02:11:49,901 [INFO] TechnicalAgent: [TSLA] TechnicalAgent — 10 signals | 10 signals — 4 bullish / 4 bearish | avg confidence 0.64
+2026-09-16 02:11:59,445 [INFO] llm.client: Ollama call succeeded — waited 84.5s for slot, call itself took 9.6s (prompt len=1000, max_tokens=512)
+2026-09-16 02:11:59,455 [INFO] NewsSentimentAgent: [TSLA] NewsSentimentAgent — 2 signals | 2 news-driven signals for TSLA (spike+daily+cached_quarterly)
+2026-09-16 02:11:59,519 [INFO] RiskManagerAgent: [TSLA] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:11:59,668 [INFO] DecisionAgent: [TSLA] DecisionAgent — 1 signals | Composite score -0.088 → neutral [regime=ranging]
+2026-09-16 02:11:59,668 [INFO] agents.orchestrator: [TSLA] No actionable signal (neutral) — skipping trade plan
+2026-09-16 02:11:59,669 [INFO] agents.orchestrator: === Running pipeline for BA [intraday] ===
+2026-09-16 02:11:59,672 [INFO] MarketRegimeAgent: [BA] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:11:59,678 [INFO] MemoryAgent: [BA] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:11:59,688 [INFO] FundamentalAgent: [BA] FundamentalAgent — 4 signals | P/E=75.70036, P/B=27.175999, RevGrowth=0.08, EarnGrowth=1.189134298045189, D/E=7.90875
+2026-09-16 02:12:00,603 [INFO] news.layer3_spike: Spike gate triggered for BA: volume 280452 > 2.0x avg 39894
+2026-09-16 02:12:09,267 [INFO] llm.client: Ollama call succeeded — waited 86.7s for slot, call itself took 9.8s (prompt len=652, max_tokens=512)
+2026-09-16 02:12:09,277 [INFO] NewsSentimentAgent: [NEE] NewsSentimentAgent — 3 signals | 3 news-driven signals for NEE (spike+daily+cached_quarterly)
+2026-09-16 02:12:09,335 [INFO] RiskManagerAgent: [NEE] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:12:09,526 [INFO] DecisionAgent: [NEE] DecisionAgent — 1 signals | Composite score -0.141 → neutral [regime=ranging]
+2026-09-16 02:12:09,527 [INFO] agents.orchestrator: [NEE] No actionable signal (neutral) — skipping trade plan
+2026-09-16 02:12:09,527 [INFO] agents.orchestrator: === Running pipeline for META [intraday] ===
+2026-09-16 02:12:09,531 [INFO] MarketRegimeAgent: [META] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:12:09,535 [INFO] MemoryAgent: [META] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:12:09,546 [INFO] FundamentalAgent: [META] FundamentalAgent — 3 signals | P/E=25.065071, P/B=6.5376515, RevGrowth=0.28, EarnGrowth=-0.134, D/E=0.42997
+2026-09-16 02:12:10,744 [INFO] news.layer3_spike: Spike gate triggered for META: volume 674808 > 2.0x avg 150234
+2026-09-16 02:12:27,800 [INFO] llm.client: Ollama call succeeded — waited 88.0s for slot, call itself took 18.5s (prompt len=488, max_tokens=512)
+2026-09-16 02:12:40,755 [INFO] llm.client: Ollama call succeeded — waited 72.7s for slot, call itself took 13.0s (prompt len=924, max_tokens=512)
+2026-09-16 02:12:40,778 [INFO] NewsSentimentAgent: [AMZN] NewsSentimentAgent — 3 signals | 3 news-driven signals for AMZN (spike+daily+cached_quarterly)
+2026-09-16 02:12:40,865 [INFO] RiskManagerAgent: [AMZN] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:12:41,041 [INFO] DecisionAgent: [AMZN] DecisionAgent — 1 signals | Composite score -0.067 → neutral [regime=ranging]
+2026-09-16 02:12:41,041 [INFO] agents.orchestrator: [AMZN] No actionable signal (neutral) — skipping trade plan
+2026-09-16 02:12:41,041 [INFO] agents.orchestrator: === Running pipeline for GOOGL [intraday] ===
+2026-09-16 02:12:41,049 [INFO] MarketRegimeAgent: [GOOGL] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:12:41,052 [INFO] MemoryAgent: [GOOGL] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:12:41,070 [INFO] FundamentalAgent: [GOOGL] FundamentalAgent — 4 signals | P/E=17.547304, P/B=6.7781363, RevGrowth=0.242, EarnGrowth=2.94, D/E=0.18859
+2026-09-16 02:12:42,039 [INFO] news.layer3_spike: Spike gate triggered for GOOGL: volume 1031816 > 2.0x avg 144306
+2026-09-16 02:12:52,440 [INFO] llm.client: Ollama call succeeded — waited 65.9s for slot, call itself took 11.7s (prompt len=792, max_tokens=512)
+2026-09-16 02:12:52,451 [INFO] NewsSentimentAgent: [WMT] NewsSentimentAgent — 3 signals | 3 news-driven signals for WMT (spike+daily+cached_quarterly)
+2026-09-16 02:12:52,506 [INFO] RiskManagerAgent: [WMT] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:12:52,663 [INFO] DecisionAgent: [WMT] DecisionAgent — 1 signals | Composite score -0.055 → neutral [regime=ranging]
+2026-09-16 02:12:52,663 [INFO] agents.orchestrator: [WMT] No actionable signal (neutral) — skipping trade plan
+2026-09-16 02:12:52,663 [INFO] agents.orchestrator: === Running pipeline for FCX [intraday] ===
+2026-09-16 02:12:52,668 [INFO] MarketRegimeAgent: [FCX] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:12:52,671 [INFO] MemoryAgent: [FCX] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:12:52,684 [INFO] FundamentalAgent: [FCX] FundamentalAgent — 2 signals | P/E=34.009804, P/B=4.9546523, RevGrowth=-0.073, EarnGrowth=0.281, D/E=0.32149
+2026-09-16 02:12:53,727 [INFO] news.layer3_spike: Spike gate triggered for FCX: volume 557489 > 2.0x avg 61785
+2026-09-16 02:13:05,679 [INFO] llm.client: Ollama call succeeded — waited 72.5s for slot, call itself took 13.2s (prompt len=956, max_tokens=96)
+2026-09-16 02:13:06,106 [INFO] TechnicalAgent: [CAT] TechnicalAgent — 8 signals | 8 signals — 0 bullish / 5 bearish | avg confidence 0.60
+2026-09-16 02:13:15,538 [INFO] llm.client: Ollama call succeeded — waited 81.7s for slot, call itself took 9.9s (prompt len=826, max_tokens=512)
+2026-09-16 02:13:15,549 [INFO] NewsSentimentAgent: [CAT] NewsSentimentAgent — 2 signals | 2 news-driven signals for CAT (spike+daily+cached_quarterly)
+2026-09-16 02:13:15,603 [INFO] RiskManagerAgent: [CAT] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:13:15,739 [INFO] DecisionAgent: [CAT] DecisionAgent — 1 signals | Composite score -0.286 → sell [regime=ranging]
+2026-09-16 02:13:15,747 [INFO] execution.broker.alpaca: Alpaca broker initialized (paper=True)
+2026-09-16 02:13:16,281 [INFO] TradePlanAgent: [CAT] TradePlanAgent — 0 signals | SELL 588 CAT @ 782.37 | SL 785.78 | TP 776.69
+2026-09-16 02:13:16,281 [INFO] agents.orchestrator: [CAT] premarket_only — skipping critic.
+2026-09-16 02:13:28,997 [INFO] llm.client: Ollama call succeeded — waited 75.8s for slot, call itself took 13.5s (prompt len=957, max_tokens=96)
+2026-09-16 02:13:29,709 [INFO] TechnicalAgent: [BA] TechnicalAgent — 9 signals | 9 signals — 2 bullish / 5 bearish | avg confidence 0.63
+2026-09-16 02:13:42,918 [INFO] llm.client: Ollama call succeeded — waited 88.3s for slot, call itself took 13.9s (prompt len=511, max_tokens=512)
+2026-09-16 02:13:53,953 [INFO] llm.client: Ollama call succeeded — waited 93.4s for slot, call itself took 11.0s (prompt len=802, max_tokens=64)
+2026-09-16 02:13:54,407 [INFO] TechnicalAgent: [META] TechnicalAgent — 8 signals | 8 signals — 5 bullish / 1 bearish | avg confidence 0.67
+2026-09-16 02:14:05,427 [INFO] llm.client: Ollama call succeeded — waited 88.5s for slot, call itself took 11.5s (prompt len=809, max_tokens=512)
+2026-09-16 02:14:05,438 [INFO] NewsSentimentAgent: [META] NewsSentimentAgent — 2 signals | 2 news-driven signals for META (spike+daily+cached_quarterly)
+2026-09-16 02:14:05,493 [INFO] RiskManagerAgent: [META] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:14:05,624 [INFO] DecisionAgent: [META] DecisionAgent — 1 signals | Composite score 0.328 → buy [regime=ranging]
+2026-09-16 02:14:05,640 [INFO] TradePlanAgent: [META] TradePlanAgent — 0 signals | BUY 405 META @ 670.49 | SL 665.55 | TP 678.73
+2026-09-16 02:14:05,640 [INFO] agents.orchestrator: [META] premarket_only — skipping critic.
+2026-09-16 02:14:15,208 [INFO] llm.client: Ollama call succeeded — waited 84.3s for slot, call itself took 9.8s (prompt len=780, max_tokens=64)
+2026-09-16 02:14:15,637 [INFO] TechnicalAgent: [GOOGL] TechnicalAgent — 13 signals | 13 signals — 7 bullish / 4 bearish | avg confidence 0.64
+2026-09-16 02:14:26,624 [INFO] llm.client: Ollama call succeeded — waited 93.9s for slot, call itself took 11.4s (prompt len=840, max_tokens=512)
+2026-09-16 02:14:26,634 [INFO] NewsSentimentAgent: [NVDA] NewsSentimentAgent — 7 signals | 7 news-driven signals for NVDA (spike+daily+cached_quarterly)
+2026-09-16 02:14:41,940 [INFO] llm.client: Ollama call succeeded — waited 104.3s for slot, call itself took 15.3s (prompt len=484, max_tokens=512)
+2026-09-16 02:14:51,684 [INFO] llm.client: Ollama call succeeded — waited 109.2s for slot, call itself took 9.7s (prompt len=775, max_tokens=64)
+2026-09-16 02:14:52,024 [INFO] TechnicalAgent: [FCX] TechnicalAgent — 11 signals | 11 signals — 2 bullish / 7 bearish | avg confidence 0.68
+2026-09-16 02:15:01,034 [INFO] llm.client: Ollama call succeeded — waited 116.5s for slot, call itself took 9.3s (prompt len=533, max_tokens=512)
+2026-09-16 02:15:01,044 [INFO] NewsSentimentAgent: [FCX] NewsSentimentAgent — 2 signals | 2 news-driven signals for FCX (spike+daily+cached_quarterly)
+2026-09-16 02:15:01,100 [INFO] RiskManagerAgent: [FCX] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:15:01,245 [INFO] DecisionAgent: [FCX] DecisionAgent — 1 signals | Composite score -0.244 → sell [regime=ranging]
+2026-09-16 02:15:01,254 [INFO] execution.broker.alpaca: Alpaca broker initialized (paper=True)
+2026-09-16 02:15:01,806 [INFO] TradePlanAgent: [FCX] TradePlanAgent — 0 signals | SELL 5696 FCX @ 69.37 | SL 69.72 | TP 68.78
+2026-09-16 02:15:01,806 [INFO] agents.orchestrator: [FCX] premarket_only — skipping critic.
+2026-09-16 02:15:11,560 [INFO] llm.client: Ollama call succeeded — waited 72.8s for slot, call itself took 10.5s (prompt len=834, max_tokens=512)
+2026-09-16 02:15:11,564 [INFO] NewsSentimentAgent: [BA] NewsSentimentAgent — 3 signals | 3 news-driven signals for BA (spike+daily+cached_quarterly)
+2026-09-16 02:15:11,616 [INFO] RiskManagerAgent: [BA] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:15:11,770 [INFO] DecisionAgent: [BA] DecisionAgent — 1 signals | Composite score -0.222 → sell [regime=ranging]
+2026-09-16 02:15:11,778 [INFO] execution.broker.alpaca: Alpaca broker initialized (paper=True)
+2026-09-16 02:15:12,338 [INFO] TradePlanAgent: [BA] TradePlanAgent — 0 signals | SELL 1867 BA @ 209.68 | SL 210.75 | TP 207.89
+2026-09-16 02:15:12,338 [INFO] agents.orchestrator: [BA] premarket_only — skipping critic.
+2026-09-16 02:15:25,850 [INFO] llm.client: Ollama call succeeded — waited 29.5s for slot, call itself took 14.3s (prompt len=488, max_tokens=512)
+2026-09-16 02:15:43,219 [INFO] llm.client: Ollama call succeeded — waited 0.0s for slot, call itself took 9.7s (prompt len=795, max_tokens=512)
+2026-09-16 02:15:43,230 [INFO] NewsSentimentAgent: [GOOGL] NewsSentimentAgent — 4 signals | 4 news-driven signals for GOOGL (spike+daily+cached_quarterly)
+2026-09-16 02:15:43,287 [INFO] RiskManagerAgent: [GOOGL] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:15:43,486 [INFO] DecisionAgent: [GOOGL] DecisionAgent — 1 signals | Composite score 0.125 → neutral [regime=ranging]
+2026-09-16 02:15:43,486 [INFO] agents.orchestrator: [GOOGL] No actionable signal (neutral) — skipping trade plan
+2026-09-16 02:15:43,488 [INFO] root: Analysis done — INTRADAY: 11/20 tickers produced a trade plan.
+2026-09-16 02:15:43,542 [INFO] execution.broker.alpaca: Alpaca broker initialized (paper=True)
+2026-09-16 02:15:44,086 [INFO] agents.orchestrator: Portfolio value refreshed: $100138.83
+2026-09-16 02:15:44,580 [INFO] agents.orchestrator: === Running pipeline for NVDA [long_term] ===
+2026-09-16 02:15:44,581 [INFO] agents.orchestrator: === Running pipeline for MSFT [long_term] ===
+2026-09-16 02:15:44,581 [INFO] agents.orchestrator: === Running pipeline for AAPL [long_term] ===
+2026-09-16 02:15:44,582 [INFO] agents.orchestrator: === Running pipeline for PLTR [long_term] ===
+2026-09-16 02:15:44,583 [INFO] agents.orchestrator: === Running pipeline for JPM [long_term] ===
+2026-09-16 02:15:44,585 [INFO] MarketRegimeAgent: [PLTR] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:15:44,598 [INFO] MarketRegimeAgent: [MSFT] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:15:44,604 [INFO] MemoryAgent: [MSFT] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:15:44,617 [INFO] MarketRegimeAgent: [JPM] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:15:44,618 [INFO] MemoryAgent: [JPM] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:15:44,637 [INFO] MemoryAgent: [PLTR] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:15:44,639 [INFO] MarketRegimeAgent: [NVDA] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:15:44,640 [INFO] FundamentalAgent: [JPM] FundamentalAgent — 2 signals | P/E=15.095931, P/B=2.650161, RevGrowth=0.304, EarnGrowth=0.469, D/E=1.379496631147948
+2026-09-16 02:15:44,645 [INFO] MemoryAgent: [NVDA] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:15:44,660 [INFO] FundamentalAgent: [PLTR] FundamentalAgent — 5 signals | P/E=147.48718, P/B=42.41888, RevGrowth=0.928, EarnGrowth=2.154, D/E=0.02139
+2026-09-16 02:15:44,672 [INFO] FundamentalAgent: [MSFT] FundamentalAgent — 3 signals | P/E=28.16544, P/B=8.34584, RevGrowth=0.177, EarnGrowth=0.317, D/E=0.29118
+2026-09-16 02:15:44,682 [INFO] MarketRegimeAgent: [AAPL] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:15:44,695 [INFO] MemoryAgent: [AAPL] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:15:44,696 [INFO] FundamentalAgent: [NVDA] FundamentalAgent — 4 signals | P/E=26.654522, P/B=22.373722, RevGrowth=1.059, EarnGrowth=1.278, D/E=0.16971
+2026-09-16 02:15:44,723 [INFO] FundamentalAgent: [AAPL] FundamentalAgent — 2 signals | P/E=38.17281, P/B=45.01902, RevGrowth=0.164, EarnGrowth=0.287, D/E=0.78445
+2026-09-16 02:15:44,886 [INFO] TechnicalAgent: [PLTR] TechnicalAgent — 8 signals | 8 signals — 8 bullish / 0 bearish | avg confidence 0.69
+2026-09-16 02:15:44,974 [INFO] TechnicalAgent: [AAPL] TechnicalAgent — 14 signals | 14 signals — 12 bullish / 2 bearish | avg confidence 0.67
+2026-09-16 02:15:54,579 [INFO] llm.client: Ollama call succeeded — waited 0.0s for slot, call itself took 9.8s (prompt len=623, max_tokens=32)
+2026-09-16 02:15:54,710 [INFO] TechnicalAgent: [JPM] TechnicalAgent — 14 signals | 14 signals — 11 bullish / 1 bearish | avg confidence 0.64
+2026-09-16 02:16:04,115 [INFO] llm.client: Ollama call succeeded — waited 9.8s for slot, call itself took 9.5s (prompt len=624, max_tokens=32)
+2026-09-16 02:16:04,232 [INFO] TechnicalAgent: [MSFT] TechnicalAgent — 11 signals | 11 signals — 9 bullish / 2 bearish | avg confidence 0.67
+2026-09-16 02:16:13,159 [INFO] llm.client: Ollama call succeeded — waited 19.3s for slot, call itself took 9.0s (prompt len=624, max_tokens=32)
+2026-09-16 02:16:13,298 [INFO] TechnicalAgent: [NVDA] TechnicalAgent — 14 signals | 14 signals — 7 bullish / 7 bearish | avg confidence 0.66
+2026-09-16 02:16:28,319 [INFO] llm.client: Ollama call succeeded — waited 0.0s for slot, call itself took 14.6s (prompt len=845, max_tokens=512)
+2026-09-16 02:16:28,338 [INFO] NewsSentimentAgent: [JPM] NewsSentimentAgent — 3 signals | 3 news-driven signals for JPM (daily+cached_quarterly+cached_monthly)
+2026-09-16 02:16:28,398 [INFO] RiskManagerAgent: [JPM] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:16:28,647 [INFO] DecisionAgent: [JPM] DecisionAgent — 1 signals | Composite score 0.436 → buy [regime=ranging]
+2026-09-16 02:16:28,658 [INFO] TradePlanAgent: [JPM] TradePlanAgent — 0 signals | BUY 123 JPM @ 352.49 | SL 336.22 | TP 385.03
+2026-09-16 02:16:28,658 [INFO] agents.orchestrator: [JPM] premarket_only — skipping critic.
+2026-09-16 02:16:28,659 [INFO] agents.orchestrator: === Running pipeline for GS [long_term] ===
+2026-09-16 02:16:28,670 [INFO] MarketRegimeAgent: [GS] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:16:28,675 [INFO] MemoryAgent: [GS] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:16:28,735 [INFO] FundamentalAgent: [GS] FundamentalAgent — 3 signals | P/E=15.267625, P/B=2.6976182, RevGrowth=0.425, EarnGrowth=0.923, D/E=7.25381
+2026-09-16 02:16:28,823 [INFO] TechnicalAgent: [GS] TechnicalAgent — 11 signals | 11 signals — 6 bullish / 5 bearish | avg confidence 0.68
+2026-09-16 02:16:41,608 [INFO] llm.client: Ollama call succeeded — waited 14.4s for slot, call itself took 13.3s (prompt len=890, max_tokens=512)
+2026-09-16 02:16:41,622 [INFO] NewsSentimentAgent: [PLTR] NewsSentimentAgent — 3 signals | 3 news-driven signals for PLTR (daily+cached_quarterly+cached_monthly)
+2026-09-16 02:16:41,679 [INFO] RiskManagerAgent: [PLTR] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:16:41,829 [INFO] DecisionAgent: [PLTR] DecisionAgent — 1 signals | Composite score 0.328 → buy [regime=ranging]
+2026-09-16 02:16:41,842 [INFO] TradePlanAgent: [PLTR] TradePlanAgent — 0 signals | BUY 108 PLTR @ 172.56 | SL 153.95 | TP 209.78
+2026-09-16 02:16:41,842 [INFO] agents.orchestrator: [PLTR] premarket_only — skipping critic.
+2026-09-16 02:16:41,842 [INFO] agents.orchestrator: === Running pipeline for V [long_term] ===
+2026-09-16 02:16:41,846 [INFO] MarketRegimeAgent: [V] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:16:41,850 [INFO] MemoryAgent: [V] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:16:41,853 [INFO] FundamentalAgent: [V] FundamentalAgent — 1 signals | P/E=31.940475, P/B=19.90567, RevGrowth=0.144, EarnGrowth=0.102, D/E=0.67821
+2026-09-16 02:16:49,785 [INFO] llm.client: Ollama call succeeded — waited 15.6s for slot, call itself took 8.2s (prompt len=840, max_tokens=512)
+2026-09-16 02:16:49,803 [INFO] NewsSentimentAgent: [NVDA] NewsSentimentAgent — 3 signals | 3 news-driven signals for NVDA (daily+cached_quarterly+cached_monthly)
+2026-09-16 02:16:49,861 [INFO] RiskManagerAgent: [NVDA] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:16:50,057 [INFO] DecisionAgent: [NVDA] DecisionAgent — 1 signals | Composite score 0.138 → neutral [regime=ranging]
+2026-09-16 02:16:50,058 [INFO] agents.orchestrator: [NVDA] No actionable signal (neutral) — skipping trade plan
+2026-09-16 02:16:50,058 [INFO] agents.orchestrator: === Running pipeline for LLY [long_term] ===
+2026-09-16 02:16:50,061 [INFO] MarketRegimeAgent: [LLY] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:16:50,068 [INFO] MemoryAgent: [LLY] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:16:50,077 [INFO] FundamentalAgent: [LLY] FundamentalAgent — 4 signals | P/E=38.162914, P/B=29.896059, RevGrowth=0.477, EarnGrowth=0.262, D/E=1.6207099999999999
+2026-09-16 02:16:50,161 [INFO] TechnicalAgent: [LLY] TechnicalAgent — 12 signals | 12 signals — 8 bullish / 4 bearish | avg confidence 0.66
+2026-09-16 02:17:04,098 [INFO] llm.client: Ollama call succeeded — waited 22.9s for slot, call itself took 14.3s (prompt len=788, max_tokens=512)
+2026-09-16 02:17:04,121 [INFO] NewsSentimentAgent: [AAPL] NewsSentimentAgent — 3 signals | 3 news-driven signals for AAPL (daily+cached_quarterly+cached_monthly)
+2026-09-16 02:17:04,179 [INFO] RiskManagerAgent: [AAPL] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:17:04,356 [INFO] DecisionAgent: [AAPL] DecisionAgent — 1 signals | Composite score 0.349 → buy [regime=ranging]
+2026-09-16 02:17:04,366 [INFO] TradePlanAgent: [AAPL] TradePlanAgent — 0 signals | BUY 106 AAPL @ 331.34 | SL 312.47 | TP 369.08
+2026-09-16 02:17:04,366 [INFO] agents.orchestrator: [AAPL] premarket_only — skipping critic.
+2026-09-16 02:17:04,367 [INFO] agents.orchestrator: === Running pipeline for UNH [long_term] ===
+2026-09-16 02:17:04,372 [INFO] MarketRegimeAgent: [UNH] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:17:04,376 [INFO] MemoryAgent: [UNH] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:17:04,384 [INFO] FundamentalAgent: [UNH] FundamentalAgent — 1 signals | P/E=24.634993, P/B=3.4558425, RevGrowth=0.004, EarnGrowth=0.615, D/E=0.69211
+2026-09-16 02:17:04,455 [INFO] TechnicalAgent: [UNH] TechnicalAgent — 15 signals | 15 signals — 5 bullish / 10 bearish | avg confidence 0.61
+2026-09-16 02:17:17,675 [INFO] llm.client: Ollama call succeeded — waited 34.4s for slot, call itself took 13.6s (prompt len=766, max_tokens=512)
+2026-09-16 02:17:17,687 [INFO] NewsSentimentAgent: [MSFT] NewsSentimentAgent — 3 signals | 3 news-driven signals for MSFT (daily+cached_quarterly+cached_monthly)
+2026-09-16 02:17:17,749 [INFO] RiskManagerAgent: [MSFT] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:17:17,914 [INFO] DecisionAgent: [MSFT] DecisionAgent — 1 signals | Composite score 0.332 → buy [regime=ranging]
+2026-09-16 02:17:17,927 [INFO] TradePlanAgent: [MSFT] TradePlanAgent — 0 signals | BUY 74 MSFT @ 497.12 | SL 469.89 | TP 551.59
+2026-09-16 02:17:17,927 [INFO] agents.orchestrator: [MSFT] premarket_only — skipping critic.
+2026-09-16 02:17:17,927 [INFO] agents.orchestrator: === Running pipeline for ISRG [long_term] ===
+2026-09-16 02:17:17,932 [INFO] MarketRegimeAgent: [ISRG] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:17:17,939 [INFO] MemoryAgent: [ISRG] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:17:17,943 [INFO] FundamentalAgent: [ISRG] FundamentalAgent — 4 signals | P/E=43.301952, P/B=7.346605, RevGrowth=0.185, EarnGrowth=0.265, D/E=0.0
+2026-09-16 02:17:18,026 [INFO] TechnicalAgent: [ISRG] TechnicalAgent — 11 signals | 11 signals — 5 bullish / 6 bearish | avg confidence 0.66
+2026-09-16 02:17:28,826 [INFO] llm.client: Ollama call succeeded — waited 44.5s for slot, call itself took 11.2s (prompt len=869, max_tokens=512)
+2026-09-16 02:17:28,841 [INFO] NewsSentimentAgent: [GS] NewsSentimentAgent — 3 signals | 3 news-driven signals for GS (daily+cached_quarterly+cached_monthly)
+2026-09-16 02:17:28,897 [INFO] RiskManagerAgent: [GS] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:17:29,056 [INFO] DecisionAgent: [GS] DecisionAgent — 1 signals | Composite score 0.124 → neutral [regime=ranging]
+2026-09-16 02:17:29,056 [INFO] agents.orchestrator: [GS] No actionable signal (neutral) — skipping trade plan
+2026-09-16 02:17:29,056 [INFO] agents.orchestrator: === Running pipeline for XOM [long_term] ===
+2026-09-16 02:17:29,061 [INFO] MarketRegimeAgent: [XOM] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:17:29,067 [INFO] MemoryAgent: [XOM] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:17:29,080 [INFO] FundamentalAgent: [XOM] FundamentalAgent — 3 signals | P/E=21.244669, P/B=2.6842105, RevGrowth=0.441, EarnGrowth=1.128, D/E=0.15921
+2026-09-16 02:17:29,151 [INFO] TechnicalAgent: [XOM] TechnicalAgent — 14 signals | 14 signals — 12 bullish / 2 bearish | avg confidence 0.68
+2026-09-16 02:17:36,833 [INFO] llm.client: Ollama call succeeded — waited 46.9s for slot, call itself took 8.0s (prompt len=626, max_tokens=32)
+2026-09-16 02:17:36,924 [INFO] TechnicalAgent: [V] TechnicalAgent — 9 signals | 9 signals — 8 bullish / 1 bearish | avg confidence 0.68
+2026-09-16 02:17:45,976 [INFO] llm.client: Ollama call succeeded — waited 53.4s for slot, call itself took 9.1s (prompt len=766, max_tokens=512)
+2026-09-16 02:17:45,987 [INFO] NewsSentimentAgent: [V] NewsSentimentAgent — 3 signals | 3 news-driven signals for V (daily+cached_quarterly+cached_monthly)
+2026-09-16 02:17:46,069 [INFO] RiskManagerAgent: [V] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:17:46,188 [INFO] DecisionAgent: [V] DecisionAgent — 1 signals | Composite score 0.229 → buy [regime=ranging]
+2026-09-16 02:17:46,201 [INFO] TradePlanAgent: [V] TradePlanAgent — 0 signals | BUY 137 V @ 375.62 | SL 361.05 | TP 404.76
+2026-09-16 02:17:46,201 [INFO] agents.orchestrator: [V] premarket_only — skipping critic.
+2026-09-16 02:17:46,202 [INFO] agents.orchestrator: === Running pipeline for NEE [long_term] ===
+2026-09-16 02:17:46,208 [INFO] MarketRegimeAgent: [NEE] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:17:46,212 [INFO] MemoryAgent: [NEE] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:17:46,217 [INFO] FundamentalAgent: [NEE] FundamentalAgent — 2 signals | P/E=18.341629, P/B=2.9600554, RevGrowth=0.124, EarnGrowth=0.531, D/E=1.61676
+2026-09-16 02:17:57,996 [INFO] llm.client: Ollama call succeeded — waited 46.3s for slot, call itself took 12.0s (prompt len=825, max_tokens=512)
+2026-09-16 02:17:58,008 [INFO] NewsSentimentAgent: [LLY] NewsSentimentAgent — 3 signals | 3 news-driven signals for LLY (daily+cached_quarterly+cached_monthly)
+2026-09-16 02:17:58,068 [INFO] RiskManagerAgent: [LLY] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:17:58,255 [INFO] DecisionAgent: [LLY] DecisionAgent — 1 signals | Composite score 0.180 → buy [regime=ranging]
+2026-09-16 02:17:58,267 [INFO] TradePlanAgent: [LLY] TradePlanAgent — 0 signals | BUY 25 LLY @ 1136.11 | SL 1056.05 | TP 1296.22
+2026-09-16 02:17:58,267 [INFO] agents.orchestrator: [LLY] premarket_only — skipping critic.
+2026-09-16 02:17:58,268 [INFO] agents.orchestrator: === Running pipeline for AMZN [long_term] ===
+2026-09-16 02:17:58,273 [INFO] MarketRegimeAgent: [AMZN] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:17:58,277 [INFO] MemoryAgent: [AMZN] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:17:58,279 [INFO] FundamentalAgent: [AMZN] FundamentalAgent — 1 signals | P/E=20.412489, P/B=4.8561263, RevGrowth=0.196, EarnGrowth=2.423, D/E=0.45616999999999996
+2026-09-16 02:17:58,366 [INFO] TechnicalAgent: [AMZN] TechnicalAgent — 8 signals | 8 signals — 5 bullish / 3 bearish | avg confidence 0.67
+2026-09-16 02:18:12,345 [INFO] llm.client: Ollama call succeeded — waited 48.3s for slot, call itself took 14.3s (prompt len=874, max_tokens=512)
+2026-09-16 02:18:12,383 [INFO] NewsSentimentAgent: [UNH] NewsSentimentAgent — 3 signals | 3 news-driven signals for UNH (daily+cached_quarterly+cached_monthly)
+2026-09-16 02:18:12,472 [INFO] RiskManagerAgent: [UNH] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:18:12,661 [INFO] DecisionAgent: [UNH] DecisionAgent — 1 signals | Composite score -0.051 → neutral [regime=ranging]
+2026-09-16 02:18:12,661 [INFO] agents.orchestrator: [UNH] No actionable signal (neutral) — skipping trade plan
+2026-09-16 02:18:12,661 [INFO] agents.orchestrator: === Running pipeline for WMT [long_term] ===
+2026-09-16 02:18:12,667 [INFO] MarketRegimeAgent: [WMT] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:18:12,671 [INFO] MemoryAgent: [WMT] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:18:12,685 [INFO] FundamentalAgent: [WMT] FundamentalAgent — 2 signals | P/E=39.593407, P/B=9.123058, RevGrowth=0.059, EarnGrowth=-0.091, D/E=0.7165300000000001
+2026-09-16 02:18:12,760 [INFO] TechnicalAgent: [WMT] TechnicalAgent — 11 signals | 11 signals — 5 bullish / 6 bearish | avg confidence 0.69
+2026-09-16 02:18:22,652 [INFO] llm.client: Ollama call succeeded — waited 52.7s for slot, call itself took 10.3s (prompt len=697, max_tokens=512)
+2026-09-16 02:18:22,665 [INFO] NewsSentimentAgent: [ISRG] NewsSentimentAgent — 3 signals | 3 news-driven signals for ISRG (daily+cached_quarterly+cached_monthly)
+2026-09-16 02:18:22,719 [INFO] RiskManagerAgent: [ISRG] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:18:22,884 [INFO] DecisionAgent: [ISRG] DecisionAgent — 1 signals | Composite score 0.072 → neutral [regime=ranging]
+2026-09-16 02:18:22,884 [INFO] agents.orchestrator: [ISRG] No actionable signal (neutral) — skipping trade plan
+2026-09-16 02:18:22,884 [INFO] agents.orchestrator: === Running pipeline for TSLA [long_term] ===
+2026-09-16 02:18:22,889 [INFO] MarketRegimeAgent: [TSLA] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:18:22,893 [INFO] MemoryAgent: [TSLA] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:18:22,902 [INFO] FundamentalAgent: [TSLA] FundamentalAgent — 4 signals | P/E=333.25232, P/B=16.211864, RevGrowth=0.255, EarnGrowth=-0.03, D/E=0.18373
+2026-09-16 02:18:40,758 [INFO] llm.client: Ollama call succeeded — waited 49.9s for slot, call itself took 18.1s (prompt len=846, max_tokens=512)
+2026-09-16 02:18:40,771 [INFO] NewsSentimentAgent: [XOM] NewsSentimentAgent — 3 signals | 3 news-driven signals for XOM (daily+cached_quarterly+cached_monthly)
+2026-09-16 02:18:40,852 [INFO] RiskManagerAgent: [XOM] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:18:41,027 [INFO] DecisionAgent: [XOM] DecisionAgent — 1 signals | Composite score 0.505 → strong_buy [regime=ranging]
+2026-09-16 02:18:41,039 [INFO] TradePlanAgent: [XOM] TradePlanAgent — 0 signals | BUY 214 XOM @ 169.32 | SL 159.97 | TP 188.02
+2026-09-16 02:18:41,040 [INFO] agents.orchestrator: [XOM] premarket_only — skipping critic.
+2026-09-16 02:18:41,040 [INFO] agents.orchestrator: === Running pipeline for CAT [long_term] ===
+2026-09-16 02:18:41,046 [INFO] MarketRegimeAgent: [CAT] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:18:41,050 [INFO] MemoryAgent: [CAT] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:18:41,055 [INFO] FundamentalAgent: [CAT] FundamentalAgent — 4 signals | P/E=33.787838, P/B=18.570377, RevGrowth=0.24, EarnGrowth=0.682, D/E=2.32783
+2026-09-16 02:18:51,453 [INFO] llm.client: Ollama call succeeded — waited 54.5s for slot, call itself took 10.7s (prompt len=628, max_tokens=32)
+2026-09-16 02:18:51,558 [INFO] TechnicalAgent: [NEE] TechnicalAgent — 12 signals | 12 signals — 5 bullish / 7 bearish | avg confidence 0.67
+2026-09-16 02:19:02,198 [INFO] llm.client: Ollama call succeeded — waited 63.6s for slot, call itself took 10.7s (prompt len=652, max_tokens=512)
+2026-09-16 02:19:02,212 [INFO] NewsSentimentAgent: [NEE] NewsSentimentAgent — 3 signals | 3 news-driven signals for NEE (daily+cached_quarterly+cached_monthly)
+2026-09-16 02:19:02,277 [INFO] RiskManagerAgent: [NEE] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:19:02,444 [INFO] DecisionAgent: [NEE] DecisionAgent — 1 signals | Composite score -0.048 → neutral [regime=ranging]
+2026-09-16 02:19:02,444 [INFO] agents.orchestrator: [NEE] No actionable signal (neutral) — skipping trade plan
+2026-09-16 02:19:02,445 [INFO] agents.orchestrator: === Running pipeline for BA [long_term] ===
+2026-09-16 02:19:02,448 [INFO] MarketRegimeAgent: [BA] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:19:02,453 [INFO] MemoryAgent: [BA] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:19:02,467 [INFO] FundamentalAgent: [BA] FundamentalAgent — 4 signals | P/E=75.70036, P/B=27.175999, RevGrowth=0.08, EarnGrowth=1.189134298045189, D/E=7.90875
+2026-09-16 02:19:02,540 [INFO] TechnicalAgent: [BA] TechnicalAgent — 10 signals | 10 signals — 3 bullish / 7 bearish | avg confidence 0.65
+2026-09-16 02:19:15,091 [INFO] llm.client: Ollama call succeeded — waited 49.8s for slot, call itself took 12.9s (prompt len=924, max_tokens=512)
+2026-09-16 02:19:15,104 [INFO] NewsSentimentAgent: [AMZN] NewsSentimentAgent — 3 signals | 3 news-driven signals for AMZN (daily+cached_quarterly+cached_monthly)
+2026-09-16 02:19:15,158 [INFO] RiskManagerAgent: [AMZN] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:19:15,278 [INFO] DecisionAgent: [AMZN] DecisionAgent — 1 signals | Composite score 0.231 → buy [regime=ranging]
+2026-09-16 02:19:15,301 [INFO] TradePlanAgent: [AMZN] TradePlanAgent — 0 signals | BUY 129 AMZN @ 248.42 | SL 232.87 | TP 279.51
+2026-09-16 02:19:15,302 [INFO] agents.orchestrator: [AMZN] premarket_only — skipping critic.
+2026-09-16 02:19:15,302 [INFO] agents.orchestrator: === Running pipeline for META [long_term] ===
+2026-09-16 02:19:15,307 [INFO] MarketRegimeAgent: [META] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:19:15,313 [INFO] MemoryAgent: [META] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:19:15,318 [INFO] FundamentalAgent: [META] FundamentalAgent — 3 signals | P/E=25.065071, P/B=6.5376515, RevGrowth=0.28, EarnGrowth=-0.134, D/E=0.42997
+2026-09-16 02:19:27,954 [INFO] llm.client: Ollama call succeeded — waited 55.7s for slot, call itself took 12.9s (prompt len=792, max_tokens=512)
+2026-09-16 02:19:27,964 [INFO] NewsSentimentAgent: [WMT] NewsSentimentAgent — 3 signals | 3 news-driven signals for WMT (daily+cached_quarterly+cached_monthly)
+2026-09-16 02:19:28,021 [INFO] RiskManagerAgent: [WMT] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:19:28,251 [INFO] DecisionAgent: [WMT] DecisionAgent — 1 signals | Composite score -0.113 → neutral [regime=ranging]
+2026-09-16 02:19:28,254 [INFO] agents.orchestrator: [WMT] No actionable signal (neutral) — skipping trade plan
+2026-09-16 02:19:28,254 [INFO] agents.orchestrator: === Running pipeline for GOOGL [long_term] ===
+2026-09-16 02:19:28,263 [INFO] MarketRegimeAgent: [GOOGL] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:19:28,267 [INFO] MemoryAgent: [GOOGL] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:19:28,282 [INFO] FundamentalAgent: [GOOGL] FundamentalAgent — 4 signals | P/E=17.547304, P/B=6.7781363, RevGrowth=0.242, EarnGrowth=2.94, D/E=0.18859
+2026-09-16 02:19:37,718 [INFO] llm.client: Ollama call succeeded — waited 65.0s for slot, call itself took 9.8s (prompt len=624, max_tokens=32)
+2026-09-16 02:19:37,845 [INFO] TechnicalAgent: [TSLA] TechnicalAgent — 7 signals | 7 signals — 3 bullish / 4 bearish | avg confidence 0.59
+2026-09-16 02:19:48,769 [INFO] llm.client: Ollama call succeeded — waited 60.8s for slot, call itself took 11.1s (prompt len=1000, max_tokens=512)
+2026-09-16 02:19:48,783 [INFO] NewsSentimentAgent: [TSLA] NewsSentimentAgent — 3 signals | 3 news-driven signals for TSLA (daily+cached_quarterly+cached_monthly)
+2026-09-16 02:19:48,834 [INFO] RiskManagerAgent: [TSLA] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:19:48,967 [INFO] DecisionAgent: [TSLA] DecisionAgent — 1 signals | Composite score -0.110 → neutral [regime=ranging]
+2026-09-16 02:19:48,967 [INFO] agents.orchestrator: [TSLA] No actionable signal (neutral) — skipping trade plan
+2026-09-16 02:19:48,967 [INFO] agents.orchestrator: === Running pipeline for FCX [long_term] ===
+2026-09-16 02:19:48,970 [INFO] MarketRegimeAgent: [FCX] MarketRegimeAgent — 1 signals | Market regime: ranging
+2026-09-16 02:19:48,974 [INFO] MemoryAgent: [FCX] MemoryAgent — 0 signals | Memory loaded — 0 keys | 0 memory-driven signals
+2026-09-16 02:19:48,984 [INFO] FundamentalAgent: [FCX] FundamentalAgent — 2 signals | P/E=34.009804, P/B=4.9546523, RevGrowth=-0.073, EarnGrowth=0.281, D/E=0.32149
+2026-09-16 02:19:49,070 [INFO] TechnicalAgent: [FCX] TechnicalAgent — 11 signals | 11 signals — 6 bullish / 5 bearish | avg confidence 0.68
+2026-09-16 02:19:56,319 [INFO] llm.client: Ollama call succeeded — waited 67.7s for slot, call itself took 7.5s (prompt len=628, max_tokens=32)
+2026-09-16 02:19:56,414 [INFO] TechnicalAgent: [CAT] TechnicalAgent — 13 signals | 13 signals — 6 bullish / 6 bearish | avg confidence 0.69
+2026-09-16 02:20:05,808 [INFO] llm.client: Ollama call succeeded — waited 73.0s for slot, call itself took 9.5s (prompt len=826, max_tokens=512)
+2026-09-16 02:20:05,819 [INFO] NewsSentimentAgent: [CAT] NewsSentimentAgent — 3 signals | 3 news-driven signals for CAT (daily+cached_quarterly+cached_monthly)
+2026-09-16 02:20:05,880 [INFO] RiskManagerAgent: [CAT] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:20:06,067 [INFO] DecisionAgent: [CAT] DecisionAgent — 1 signals | Composite score 0.022 → neutral [regime=ranging]
+2026-09-16 02:20:06,067 [INFO] agents.orchestrator: [CAT] No actionable signal (neutral) — skipping trade plan
+2026-09-16 02:20:15,191 [INFO] llm.client: Ollama call succeeded — waited 54.9s for slot, call itself took 9.4s (prompt len=834, max_tokens=512)
+2026-09-16 02:20:15,206 [INFO] NewsSentimentAgent: [BA] NewsSentimentAgent — 3 signals | 3 news-driven signals for BA (daily+cached_quarterly+cached_monthly)
+2026-09-16 02:20:15,269 [INFO] RiskManagerAgent: [BA] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:20:15,442 [INFO] DecisionAgent: [BA] DecisionAgent — 1 signals | Composite score -0.189 → sell [regime=ranging]
+2026-09-16 02:20:15,450 [INFO] execution.broker.alpaca: Alpaca broker initialized (paper=True)
+2026-09-16 02:20:15,996 [INFO] TradePlanAgent: [BA] TradePlanAgent — 0 signals | SELL 165 BA @ 209.69 | SL 221.83 | TP 185.40
+2026-09-16 02:20:15,996 [INFO] agents.orchestrator: [BA] premarket_only — skipping critic.
+2026-09-16 02:20:25,109 [INFO] llm.client: Ollama call succeeded — waited 59.9s for slot, call itself took 9.9s (prompt len=608, max_tokens=32)
+2026-09-16 02:20:25,198 [INFO] TechnicalAgent: [META] TechnicalAgent — 14 signals | 14 signals — 9 bullish / 5 bearish | avg confidence 0.67
+2026-09-16 02:20:32,702 [INFO] llm.client: Ollama call succeeded — waited 56.8s for slot, call itself took 7.6s (prompt len=625, max_tokens=32)
+2026-09-16 02:20:32,791 [INFO] TechnicalAgent: [GOOGL] TechnicalAgent — 10 signals | 10 signals — 9 bullish / 1 bearish | avg confidence 0.64
+2026-09-16 02:20:45,730 [INFO] llm.client: Ollama call succeeded — waited 63.3s for slot, call itself took 13.0s (prompt len=816, max_tokens=512)
+2026-09-16 02:20:45,743 [INFO] NewsSentimentAgent: [META] NewsSentimentAgent — 3 signals | 3 news-driven signals for META (daily+cached_quarterly+cached_monthly)
+2026-09-16 02:20:45,797 [INFO] RiskManagerAgent: [META] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:20:45,982 [INFO] DecisionAgent: [META] DecisionAgent — 1 signals | Composite score 0.122 → neutral [regime=ranging]
+2026-09-16 02:20:45,982 [INFO] agents.orchestrator: [META] No actionable signal (neutral) — skipping trade plan
+2026-09-16 02:20:55,801 [INFO] llm.client: Ollama call succeeded — waited 65.5s for slot, call itself took 10.1s (prompt len=795, max_tokens=512)
+2026-09-16 02:20:55,813 [INFO] NewsSentimentAgent: [GOOGL] NewsSentimentAgent — 3 signals | 3 news-driven signals for GOOGL (daily+cached_quarterly+cached_monthly)
+2026-09-16 02:20:55,867 [INFO] RiskManagerAgent: [GOOGL] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:20:56,021 [INFO] DecisionAgent: [GOOGL] DecisionAgent — 1 signals | Composite score 0.406 → buy [regime=ranging]
+2026-09-16 02:20:56,033 [INFO] TradePlanAgent: [GOOGL] TradePlanAgent — 0 signals | BUY 97 GOOGL @ 344.98 | SL 324.32 | TP 386.29
+2026-09-16 02:20:56,033 [INFO] agents.orchestrator: [GOOGL] premarket_only — skipping critic.
+2026-09-16 02:21:04,265 [INFO] llm.client: Ollama call succeeded — waited 65.7s for slot, call itself took 8.5s (prompt len=533, max_tokens=512)
+2026-09-16 02:21:04,270 [INFO] NewsSentimentAgent: [FCX] NewsSentimentAgent — 3 signals | 3 news-driven signals for FCX (daily+cached_quarterly+cached_monthly)
+2026-09-16 02:21:04,320 [INFO] RiskManagerAgent: [FCX] RiskManagerAgent — 0 signals | Circuit breakers nominal | VaR: VaR $0 within budget $2000 | Exposure: 0/20 trades open
+2026-09-16 02:21:04,484 [INFO] DecisionAgent: [FCX] DecisionAgent — 1 signals | Composite score 0.051 → neutral [regime=ranging]
+2026-09-16 02:21:04,484 [INFO] agents.orchestrator: [FCX] No actionable signal (neutral) — skipping trade plan
+2026-09-16 02:21:04,485 [INFO] root: Analysis done — LONG_TERM: 10/20 tickers produced a trade plan.
+2026-09-16 02:21:04,486 [INFO] root: Premarket analysis complete.
+PS C:\Users\Vansh\Desktop\Trading Agent\scripts> 

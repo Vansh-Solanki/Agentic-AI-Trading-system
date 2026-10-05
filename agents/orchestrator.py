@@ -32,6 +32,7 @@ from data.feeds.price_feed import fetch_snapshot
 from llm.prompts.spike_analysis import build_structured_summary
 from risk.circuit_breakers import check_circuit_breakers
 from execution.broker.alpaca import AlpacaBroker
+from execution.order_sync import sync_broker_orders
 
 logger = logging.getLogger(__name__)
 
@@ -515,25 +516,67 @@ class Orchestrator:
         run_all(), since 1-minute candles were removed and re-running every
         agent every 60s wasted Ollama/yfinance/FinBERT calls on unchanged data.
         """
+        # Session 52 (Bug 6, Part C): must run before the market-closed and
+        # circuit-breaker returns below — a broker order can resolve (fill,
+        # cancel, expire) after hours or while the breaker is tripped, and
+        # still needs to be finalized in the DB regardless of whether the
+        # rest of this cycle runs.
+        try:
+            sync_broker_orders()
+        except Exception:
+            logger.exception("Order sync failed during maintenance — continuing.")
+
         if not _is_market_open():
             return
-        triggered, reason = check_circuit_breakers()
-        if triggered:
-            logger.warning("CIRCUIT BREAKER TRIGGERED — halting maintenance cycle. Reason: %s", reason)
-            return
+
+        # Circuit breaker repair: this used to return here when tripped,
+        # skipping reconciliation AND check_sl_tp_exits for as long as the
+        # trip lasted — every open position's stop-loss went completely
+        # unmonitored during exactly the scenario (losses) the breaker exists
+        # to react to. The breaker only blocks NEW entries (validate_plan());
+        # it must never stop watching positions that are already open.
         self._refresh_portfolio_and_reconcile()
 
     def run_all(self, premarket_only: bool = False) -> dict[str, dict[str, AgentOutput]]:
+        # Session 52 (Bug 6, Part C): same reasoning as run_maintenance() —
+        # orders can resolve at any time, finalize them before anything else.
+        try:
+            sync_broker_orders()
+        except Exception:
+            logger.exception("Order sync failed at start of run_all — continuing.")
+
         if not premarket_only and not _is_market_open():
             logger.info("Market closed — skipping cycle.")
             return {}
 
-        triggered, reason = check_circuit_breakers()
-        if triggered:
-            logger.warning("CIRCUIT BREAKER TRIGGERED — halting full cycle. Reason: %s", reason)
-            return {}
-
+        # Circuit breaker repair: no early return on a trip anymore — this
+        # used to return {} here, before _refresh_portfolio_and_reconcile()
+        # ever ran, meaning a tripped breaker also silently stopped
+        # reconciliation and SL/TP monitoring for this lane's entire cycle.
+        # Reconcile/sync always run first; premarket_only runs ignore the
+        # breaker entirely (premarket never reaches execution, so there are
+        # no new entries for it to block).
         closed_outcomes = self._refresh_portfolio_and_reconcile()
+
+        triggered, reason = (False, "") if premarket_only else check_circuit_breakers()
+
+        # When tripped, running the full pipeline on a ticker with no open
+        # position can only ever produce a blocked entry (validate_plan()
+        # rejects it) — pure wasted Ollama/yfinance time. Tickers that DO
+        # hold an open filled entry in this lane still need the full
+        # pipeline: holds, signal-reversal exits, and SL/TP-driven exits all
+        # depend on it, and none of those go through validate_plan().
+        tickers_to_run = WATCHLIST
+        if triggered:
+            tickers_to_run = [
+                t for t in WATCHLIST
+                if get_open_filled_entry_trade(t, self.mode.value) is not None
+            ]
+            logger.warning(
+                "CIRCUIT BREAKER TRIPPED (%s) — new entries blocked; running pipeline for %d/%d "
+                "tickers with an open %s position.",
+                reason, len(tickers_to_run), len(WATCHLIST), self.mode.value,
+            )
 
         # Session 36, Problem 2: pre-fetch all candles sequentially (one lock
         # holder at a time) before the parallel phase launches. Without this,
@@ -544,7 +587,7 @@ class Orchestrator:
         # lock. Warming the cache here means every Phase 1 agent call below
         # hits a cache hit instead of a live yfinance call.
         timeframes = INTRADAY_TIMEFRAMES if self.mode == TradingMode.INTRADAY else LONGTERM_TIMEFRAMES
-        warm_up(WATCHLIST, timeframes)
+        warm_up(tickers_to_run, timeframes)
 
         # Not a `with` block, and not as_completed() — same shutdown(wait=True)
         # problem as Phase 1's pool above, plus a second bug: as_completed()
@@ -588,7 +631,7 @@ class Orchestrator:
             executor.submit(
                 _timed_run_ticker, ticker, closed_outcomes.get((ticker, self.mode.value)), premarket_only
             ): ticker
-            for ticker in WATCHLIST
+            for ticker in tickers_to_run
         }
 
         # Edge case (per-start fairness alone can hang run_all() forever):
